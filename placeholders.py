@@ -7,10 +7,10 @@ class DataCache:
     def __init__(self):
         self.cache = {}
         self.last_update = 0
-        self.update_interval = 60
+        self.update_interval = 5
         self.jmm_cache = {}
         self.jmm_last_update = 0
-        self.jmm_update_interval = 10
+        self.jmm_update_interval = 5
 
     def get_data(self):
         if time.time() - self.last_update > self.update_interval:

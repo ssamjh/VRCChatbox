@@ -10,36 +10,30 @@ class VRChatMessenger:
     def __init__(self, ip="127.0.0.1", port=9000):
         self.client = udp_client.SimpleUDPClient(ip, port)
         self.active_messages = {}
-        self.initialize_message_threads()
+        self.update_thread = threading.Thread(target=self._update_messages, daemon=True)
+        self.update_thread.start()
 
-    def initialize_message_threads(self):
-        for category, config in message_config.items():
-            if category != "placeholders":
-                self.active_messages[category] = {
-                    "current_index": 0,
-                    "message": "Initializing...",
-                }
-                thread = threading.Thread(
-                    target=self._update_category_messages, args=(category,), daemon=True
-                )
-                thread.start()
-
-    def _update_category_messages(self, category):
+    def _update_messages(self):
         while True:
-            config = message_config[category]
-            messages = config["messages"]
-            current_index = self.active_messages[category]["current_index"]
+            for category, config in message_config.items():
+                if category != "placeholders":
+                    if category not in self.active_messages:
+                        self.active_messages[category] = {
+                            "current_index": 0,
+                            "message": "Initializing...",
+                        }
 
-            raw_message = messages[current_index]
-            formatted_message = self._format_message(raw_message)
-
-            self.active_messages[category]["message"] = formatted_message
-            self.active_messages[category]["current_index"] = (current_index + 1) % len(
-                messages
-            )
+                    messages = config["messages"]
+                    current_index = self.active_messages[category]["current_index"]
+                    raw_message = messages[current_index]
+                    formatted_message = self._format_message(raw_message)
+                    self.active_messages[category]["message"] = formatted_message
+                    self.active_messages[category]["current_index"] = (
+                        current_index + 1
+                    ) % len(messages)
 
             self.update_display()
-            time.sleep(config["rotation_interval"])
+            time.sleep(5)
 
     def _format_message(self, message):
         try:
