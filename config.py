@@ -16,18 +16,20 @@ def extract_placeholders(messages):
 message_config = {
     "status": {
         "rotation_interval": 10,
-        "messages": ["{time}"],
+        "messages": ["{time} - {heart_rate}bpm"],
     },
     "system": {
         "rotation_interval": 10,
         "messages": [
-            "BPM: {heart_rate}",
             "Watch 🔋: {watch_battery}%",
             "Phone 🔋: {phone_battery}%",
             "Temp: {room_temp}°C {room_temp_f}°F",
             "Humidity: {room_humid}%",
             "Light Level: {room_light}lux",
             "GPU: {gpu_temp}°C",
+            "Daily Steps: {steps}",
+            "Room CO₂: {co2}",
+            "IRL Location: {location}",
         ],
     },
     "joinmymusic_info": {

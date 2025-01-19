@@ -90,6 +90,9 @@ def get_placeholder_value(placeholder):
             if jmm_data.get("listeners")
             else "0 others"
         ),
+        "steps": lambda: data["watch"]["daily_steps"],
+        "co2": lambda: data["bedroom"]["co2"],
+        "location": lambda: data["location"]["state"],
     }
 
     try:
