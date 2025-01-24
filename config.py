@@ -28,7 +28,6 @@ message_config = {
             "Light Level: {room_light}lux",
             "GPU: {gpu_temp}°C",
             "Daily Steps: {steps}",
-            "Room CO₂: {co2}",
             "IRL Location: {location}",
         ],
     },
