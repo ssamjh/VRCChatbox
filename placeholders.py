@@ -15,7 +15,7 @@ class DataCache:
     def get_data(self):
         if time.time() - self.last_update > self.update_interval:
             try:
-                response = requests.get("https://locate.sjh.at/data.php")
+                response = requests.get("https://locatesam.com/data.php")
                 if response.status_code == 200:
                     self.cache = response.json()
                     self.last_update = time.time()
@@ -91,7 +91,6 @@ def get_placeholder_value(placeholder):
             else "0 others"
         ),
         "steps": lambda: data["watch"]["daily_steps"],
-        "co2": lambda: data["bedroom"]["co2"],
         "location": lambda: data["location"]["state"],
     }
 
