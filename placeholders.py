@@ -1,6 +1,7 @@
 import requests
 import time
 from datetime import datetime
+from boop_counter import BoopCounter
 
 
 class DataCache:
@@ -11,6 +12,7 @@ class DataCache:
         self.jmm_cache = {}
         self.jmm_last_update = 0
         self.jmm_update_interval = 5
+        self.boop_counter = BoopCounter()
 
     def get_data(self):
         if time.time() - self.last_update > self.update_interval:
@@ -39,6 +41,11 @@ class DataCache:
                 print(f"Error updating JMM data: {e}")
         return self.jmm_cache
 
+    def get_boop_data(self):
+        # Make sure to reload from file each time to get latest values
+        self.boop_counter._load_data()
+        return self.boop_counter.get_boops_data()
+
 
 data_cache = DataCache()
 
@@ -52,6 +59,7 @@ def truncate_text(text, max_length=27):
 def get_placeholder_value(placeholder):
     data = data_cache.get_data()
     jmm_data = data_cache.get_jmm_data()
+    boop_data = data_cache.get_boop_data()
 
     if not data:
         return "No data"
@@ -92,6 +100,8 @@ def get_placeholder_value(placeholder):
         ),
         "steps": lambda: data["watch"]["daily_steps"],
         "location": lambda: data["location"]["state"],
+        "total_boops": lambda: boop_data["total_boops"],
+        "daily_boops": lambda: boop_data["daily_boops"],
     }
 
     try:

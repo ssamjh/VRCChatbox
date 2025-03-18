@@ -1,17 +1,66 @@
 import requests
-from pythonosc import udp_client
+from pythonosc import udp_client, osc_server, dispatcher
 import time
 import threading
 from config import message_config
 from placeholders import get_placeholder_value, data_cache
+from boop_counter import BoopCounter
 
 
 class VRChatMessenger:
-    def __init__(self, ip="127.0.0.1", port=9000):
+    def __init__(self, ip="127.0.0.1", port=9000, listen_port=9001):
         self.client = udp_client.SimpleUDPClient(ip, port)
         self.active_messages = {}
         self.update_thread = threading.Thread(target=self._update_messages, daemon=True)
+
+        # Initialize the boop counter and share it with data_cache
+        self.boop_counter = BoopCounter()
+        from placeholders import data_cache
+
+        data_cache.boop_counter = self.boop_counter  # Share the same instance
+
+        # Setup OSC dispatcher for listening
+        self.dispatcher = dispatcher.Dispatcher()
+        self.dispatcher.map("/avatar/parameters/OSCBoop", self._handle_boop)
+        self.dispatcher.map(
+            "/avatar/parameters/BoopCounterEnabled", self._handle_boop_counter_enabled
+        )
+
+        # Setup OSC server for listening
+        self.server = osc_server.ThreadingOSCUDPServer(
+            (ip, listen_port), self.dispatcher
+        )
+        print(f"OSC Server initialized on {ip}:{listen_port}")
+        self.server_thread = threading.Thread(
+            target=self.server.serve_forever, daemon=True
+        )
+
+        # Start threads
         self.update_thread.start()
+        print(f"Starting OSC listener thread on port {listen_port}...")
+        self.server_thread.start()
+        print(
+            f"OSC listener thread started. Waiting for messages on {ip}:{listen_port}"
+        )
+
+    def _handle_boop(self, address, *args):
+        print(f"OSC message received: {address} with args: {args}")
+        if args and args[0]:  # Check if there's a value and it's truthy
+            if self.boop_counter.increment_boops():
+                print(
+                    f"Boop received! Total: {self.boop_counter.total_boops}, Daily: {self.boop_counter.daily_boops}"
+                )
+        else:
+            print(f"Boop ignored - value was: {args}")
+
+    def _handle_boop_counter_enabled(self, address, *args):
+        print(f"OSC message received: {address} with args: {args}")
+        if args:
+            enabled = bool(args[0])
+            self.boop_counter.set_counter_enabled(enabled)
+            print(f"Boop counter {'enabled' if enabled else 'disabled'}")
+        else:
+            print(f"Boop counter enable message had no arguments")
 
     def _update_messages(self):
         while True:
@@ -72,8 +121,32 @@ class VRChatMessenger:
 
 def main():
     vrc = VRChatMessenger()
+
+    # Test that OSC is properly set up by sending a test message
+    import time
+    from pythonosc import udp_client
+
+    print("Testing OSC with local message...")
+    # Wait a moment for server to start
+    time.sleep(1)
+
+    # Create a test client that sends to our own server
+    test_client = udp_client.SimpleUDPClient("127.0.0.1", 9001)
+
+    # Send test messages
+    print("Sending test boop counter enable message...")
+    test_client.send_message("/avatar/parameters/BoopCounterEnabled", 1)
+    time.sleep(0.5)
+
+    print("Sending test boop message...")
+    test_client.send_message("/avatar/parameters/OSCBoop", 1)
+    time.sleep(0.5)
+
+    print("OSC test complete")
+
     try:
         print("VRChat Dynamic Chat Message Sender running...")
+        print("Listening for boops on port 9001...")
         print("Press Ctrl+C to exit")
         while True:
             time.sleep(1)
