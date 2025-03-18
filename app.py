@@ -50,6 +50,39 @@ class VRChatMessenger:
                 print(
                     f"Boop received! Total: {self.boop_counter.total_boops}, Daily: {self.boop_counter.daily_boops}"
                 )
+
+                # Get current boops message and update it immediately
+                if "boops" in self.active_messages:
+                    current_message = message_config["boops"]["messages"][0]
+                    boops_data = self.boop_counter.get_boops_data()
+
+                    # Format the message with updated boop counts
+                    formatted_message = current_message.format(
+                        daily_boops=boops_data["daily_boops"],
+                        total_boops=boops_data["total_boops"],
+                    )
+
+                    # Update the active message
+                    self.active_messages["boops"]["message"] = formatted_message
+
+                    # Send an immediate display update without changing other messages
+                    active_lines = []
+                    for category in message_config:
+                        if (
+                            category != "placeholders"
+                            and category in self.active_messages
+                        ):
+                            message = self.active_messages[category]["message"]
+                            if self._should_show_message(category, message):
+                                active_lines.append(message)
+
+                    combined_message = "\n".join(active_lines)
+                    self.client.send_message(
+                        "/chatbox/input", [combined_message, True, True]
+                    )
+                    print(f"Display updated with new boop count:\n{combined_message}")
+            else:
+                print(f"Boop ignored - counter disabled")
         else:
             print(f"Boop ignored - value was: {args}")
 

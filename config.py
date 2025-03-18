@@ -31,7 +31,7 @@ message_config = {
     "boops": {
         "rotation_interval": 10,
         "messages": [
-            "Boops: {daily_boops} ({total_boops})",
+            "Boops: {daily_boops} ({total_boops} total)",
         ],
     },
     "joinmymusic_info": {
