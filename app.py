@@ -121,12 +121,33 @@ class VRChatMessenger:
         self.last_message_time = time.time()
 
     def _check_song_changes(self):
-        """Periodically check for song changes"""
+        """Periodically check for song changes and date changes"""
+        last_checked_date = self.boop_counter._get_current_date()
+
         while True:
+            # Check for date change
+            current_date = self.boop_counter._get_current_date()
+            if current_date != last_checked_date:
+                print(f"Date changed from {last_checked_date} to {current_date}")
+                last_checked_date = current_date
+
+                # Update the boop counter for the new day
+                self.boop_counter._load_data()  # This will reset daily boops if needed
+
+                # If we're currently showing boops, update the display with new count
+                if self.show_boops:
+                    if "boops" in self.active_messages:
+                        self.active_messages["boops"]["message"] = self._format_message(
+                            message_config["boops"]["messages"][0]
+                        )
+                    self.request_display_update()
+
+            # Check for song change (existing code)
             if self.check_for_song_change():
                 # When song changes, hide the boop counter until next boop
                 self.show_boops = False
                 self.request_display_update()
+
             time.sleep(5)  # Check every 5 seconds
 
     def check_for_song_change(self):
