@@ -1,29 +1,14 @@
 import requests
 import time
 from datetime import datetime
-from boop_counter import BoopCounter
 
 
 class DataCache:
     def __init__(self):
-        self.cache = {}
-        self.last_update = 0
-        self.update_interval = 5
         self.jmm_cache = {}
         self.jmm_last_update = 0
         self.jmm_update_interval = 5
-        self.boop_counter = BoopCounter()
-
-    def get_data(self):
-        if time.time() - self.last_update > self.update_interval:
-            try:
-                response = requests.get("https://locatesam.com/data.php")
-                if response.status_code == 200:
-                    self.cache = response.json()
-                    self.last_update = time.time()
-            except Exception as e:
-                print(f"Error updating data: {e}")
-        return self.cache
+        self.boop_counter = None  # Will be set by VRChatMessenger
 
     def get_jmm_data(self):
         if time.time() - self.jmm_last_update > self.jmm_update_interval:
@@ -42,6 +27,10 @@ class DataCache:
         return self.jmm_cache
 
     def get_boop_data(self):
+        # Make sure boop_counter has been set
+        if self.boop_counter is None:
+            return {"total_boops": 0, "daily_boops": 0, "counter_enabled": False}
+
         # Make sure to reload from file each time to get latest values
         self.boop_counter._load_data()
         return self.boop_counter.get_boops_data()
@@ -57,54 +46,32 @@ def truncate_text(text, max_length=27):
 
 
 def get_placeholder_value(placeholder):
-    data = data_cache.get_data()
+    # Remove locatesam.com data fetch
     jmm_data = data_cache.get_jmm_data()
     boop_data = data_cache.get_boop_data()
 
-    if not data:
-        return "No data"
+    # Handle only the placeholders we need
+    if placeholder in ["total_boops", "daily_boops"]:
+        return boop_data.get(placeholder, 0)
 
-    def format_listeners(count):
-        if count == 1:
-            return "1 other"
-        return f"{count} others"
+    if placeholder == "time":
+        return datetime.now().strftime("%I:%M %p")
 
-    mappings = {
-        "watch_battery": lambda: data["watch"]["battery_level"],
-        "phone_battery": lambda: data["phone"]["battery_level"],
-        "room_temp": lambda: round(float(data["bedroom"]["temperature"])),
-        "room_temp_f": lambda: round(
-            (float(data["bedroom"]["temperature"]) * 9 / 5) + 32
-        ),
-        "room_humid": lambda: round(float(data["bedroom"]["humidity"])),
-        "room_light": lambda: round(float(data["bedroom"]["light_level"])),
-        "gpu_temp": lambda: round(float(data["computer"]["gpu_temp"])),
-        "heart_rate": lambda: data["watch"]["heart_rate"],
-        "time": lambda: datetime.now().strftime("%I:%M %p"),
-        "jmm_artist": lambda: truncate_text(
+    if placeholder == "jmm_artist":
+        if not jmm_data.get("metadata"):
+            return "No data"
+        return truncate_text(
             ", ".join(
                 artist["name"] for artist in jmm_data["metadata"]["current"]["artist"]
             )
-            if jmm_data.get("metadata")
-            else "No data"
-        ),
-        "jmm_song": lambda: truncate_text(
-            jmm_data["metadata"]["current"]["song"]
-            if jmm_data.get("metadata")
-            else "No data"
-        ),
-        "jmm_listeners": lambda: (
-            format_listeners(jmm_data["listeners"]["listeners"])
-            if jmm_data.get("listeners")
-            else "0 others"
-        ),
-        "steps": lambda: data["watch"]["daily_steps"],
-        "location": lambda: data["location"]["state"],
-        "total_boops": lambda: boop_data["total_boops"],
-        "daily_boops": lambda: boop_data["daily_boops"],
-    }
+            if jmm_data.get("metadata") and jmm_data["metadata"]["current"]["artist"]
+            else "No artist"
+        )
 
-    try:
-        return mappings[placeholder]()
-    except (KeyError, TypeError):
-        return f"Error: {placeholder}"
+    if placeholder == "jmm_song":
+        if not jmm_data.get("metadata"):
+            return "No data"
+        return truncate_text(jmm_data["metadata"]["current"]["song"] or "No song")
+
+    # If we get here, it's an unknown placeholder
+    return f"Error: {placeholder}"

@@ -1,4 +1,3 @@
-import requests
 from pythonosc import udp_client, osc_server, dispatcher
 import time
 import threading
@@ -12,8 +11,14 @@ class VRChatMessenger:
         self.client = udp_client.SimpleUDPClient(ip, port)
         self.active_messages = {}
 
-        # Initialize messages once
-        self._initialize_messages()
+        # Rate limiting variables
+        self.last_message_time = 0
+        self.rate_limit = 1.5  # Minimum seconds between messages
+        self.update_pending = False
+        self.update_needed = False
+
+        # Simple boop display flag
+        self.show_boops = False
 
         # Add track of current song to detect changes
         self.current_song = None
@@ -21,16 +26,14 @@ class VRChatMessenger:
 
         # Initialize the boop counter and share it with data_cache
         self.boop_counter = BoopCounter()
-        from placeholders import data_cache
-
         data_cache.boop_counter = self.boop_counter  # Share the same instance
+
+        # Initialize messages AFTER boop_counter is set up
+        self._initialize_messages()
 
         # Setup OSC dispatcher for listening
         self.dispatcher = dispatcher.Dispatcher()
         self.dispatcher.map("/avatar/parameters/OSCBoop", self._handle_boop)
-        self.dispatcher.map(
-            "/avatar/parameters/BoopCounterEnabled", self._handle_boop_counter_enabled
-        )
 
         # Setup OSC server for listening
         self.server = osc_server.ThreadingOSCUDPServer(
@@ -46,13 +49,63 @@ class VRChatMessenger:
             target=self._check_song_changes, daemon=True
         )
 
+        # Add a thread for rate-limited updates
+        self.update_thread = threading.Thread(
+            target=self._rate_limited_updates, daemon=True
+        )
+
         # Start threads
         print(f"Starting OSC listener thread on port {listen_port}...")
         self.server_thread.start()
         self.song_check_thread.start()
+        self.update_thread.start()
         print(
             f"OSC listener thread started. Waiting for messages on {ip}:{listen_port}"
         )
+
+    def _rate_limited_updates(self):
+        """Thread that handles sending updates at a rate-limited pace"""
+        while True:
+            if self.update_needed and not self.update_pending:
+                current_time = time.time()
+                time_since_last = current_time - self.last_message_time
+
+                if time_since_last >= self.rate_limit:
+                    self.update_pending = True
+                    self.update_needed = False
+                    self._send_display_update()
+                    self.last_message_time = time.time()
+                    self.update_pending = False
+
+            time.sleep(0.1)  # Small sleep to avoid CPU spinning
+
+    def _send_display_update(self):
+        """Send the actual display update to VRChat"""
+        # Define the display order
+        display_order = [
+            "time",
+            "boops",
+            "joinmymusic_info",
+            "joinmymusic_artist",
+            "joinmymusic_song",
+        ]
+
+        # Always update time message first
+        if "time" in self.active_messages:
+            self.active_messages["time"]["message"] = self._format_message(
+                message_config["time"]["messages"][0]
+            )
+
+        active_lines = []
+        for category in display_order:
+            if category in self.active_messages:
+                message = self.active_messages[category]["message"]
+                if self._should_show_message(category, message):
+                    active_lines.append(message)
+
+        combined_message = "\n".join(active_lines)
+        self.client.send_message("/chatbox/input", [combined_message, True, True])
+        print(f"Display updated:\n{combined_message}")
 
     def _initialize_messages(self):
         """Initialize messages once rather than continuously updating them"""
@@ -64,13 +117,16 @@ class VRChatMessenger:
                 self.active_messages[category] = {
                     "message": formatted_message,
                 }
-        self.update_display()
+        self._send_display_update()
+        self.last_message_time = time.time()
 
     def _check_song_changes(self):
         """Periodically check for song changes"""
         while True:
             if self.check_for_song_change():
-                self.update_display()
+                # When song changes, hide the boop counter until next boop
+                self.show_boops = False
+                self.request_display_update()
             time.sleep(5)  # Check every 5 seconds
 
     def check_for_song_change(self):
@@ -127,43 +183,27 @@ class VRChatMessenger:
     def _handle_boop(self, address, *args):
         print(f"OSC message received: {address} with args: {args}")
         if args and args[0]:  # Check if there's a value and it's truthy
-            if self.boop_counter.increment_boops():
-                print(
-                    f"Boop received! Total: {self.boop_counter.total_boops}, Daily: {self.boop_counter.daily_boops}"
+            # Always increment the counter regardless of whether we're showing it
+            self.boop_counter.increment_boops()
+            print(
+                f"Boop received! Total: {self.boop_counter.total_boops}, Daily: {self.boop_counter.daily_boops}"
+            )
+
+            # Show boops and update the message
+            self.show_boops = True
+            if "boops" in self.active_messages:
+                self.active_messages["boops"]["message"] = self._format_message(
+                    message_config["boops"]["messages"][0]
                 )
 
-                # Update the time message
-                if "time" in self.active_messages:
-                    self.active_messages["time"]["message"] = self._format_message(
-                        message_config["time"]["messages"][0]
-                    )
-
-                # Update the boops message
-                if "boops" in self.active_messages:
-                    self.active_messages["boops"]["message"] = self._format_message(
-                        message_config["boops"]["messages"][0]
-                    )
-
-                # Update display
-                self.update_display()
-            else:
-                print(f"Boop ignored - counter disabled")
+            # Request an update - this won't send immediately if rate-limited
+            self.request_display_update()
         else:
             print(f"Boop ignored - value was: {args}")
 
-    def _handle_boop_counter_enabled(self, address, *args):
-        print(f"OSC message received: {address} with args: {args}")
-        if args:
-            enabled = bool(args[0])
-            was_enabled = self.boop_counter.counter_enabled
-            self.boop_counter.set_counter_enabled(enabled)
-            print(f"Boop counter {'enabled' if enabled else 'disabled'}")
-
-            # Update display if the enabled state changed
-            if was_enabled != enabled:
-                self.update_display()
-        else:
-            print(f"Boop counter enable message had no arguments")
+    def request_display_update(self):
+        """Request a display update, respecting rate limits"""
+        self.update_needed = True
 
     def _format_message(self, message):
         try:
@@ -176,9 +216,9 @@ class VRChatMessenger:
             return f"Error: Missing placeholder {e}"
 
     def _should_show_message(self, category, message):
-        # For boops, only show if counter is enabled
+        # For boops, only show if there's been a recent boop
         if category == "boops":
-            return self.boop_counter.counter_enabled
+            return self.show_boops
 
         # For JoinMyMusic related categories
         if category.startswith("joinmymusic"):
@@ -198,59 +238,9 @@ class VRChatMessenger:
 
         return True
 
-    def update_display(self):
-        """Update the display with the current active messages"""
-        # Always update time message first
-        if "time" in self.active_messages:
-            self.active_messages["time"]["message"] = self._format_message(
-                message_config["time"]["messages"][0]
-            )
-
-        # Define the display order
-        display_order = [
-            "time",
-            "boops",
-            "joinmymusic_info",
-            "joinmymusic_artist",
-            "joinmymusic_song",
-        ]
-
-        active_lines = []
-        for category in display_order:
-            if category in self.active_messages:
-                message = self.active_messages[category]["message"]
-                if self._should_show_message(category, message):
-                    active_lines.append(message)
-
-        combined_message = "\n".join(active_lines)
-        self.client.send_message("/chatbox/input", [combined_message, True, True])
-        print(f"Display updated:\n{combined_message}")
-
 
 def main():
     vrc = VRChatMessenger()
-
-    # Test that OSC is properly set up by sending a test message
-    import time
-    from pythonosc import udp_client
-
-    print("Testing OSC with local message...")
-    # Wait a moment for server to start
-    time.sleep(1)
-
-    # Create a test client that sends to our own server
-    test_client = udp_client.SimpleUDPClient("127.0.0.1", 9001)
-
-    # Send test messages
-    print("Sending test boop counter enable message...")
-    test_client.send_message("/avatar/parameters/BoopCounterEnabled", 1)
-    time.sleep(0.5)
-
-    print("Sending test boop message...")
-    test_client.send_message("/avatar/parameters/OSCBoop", 1)
-    time.sleep(0.5)
-
-    print("OSC test complete")
 
     try:
         print("VRChat Dynamic Chat Message Sender running...")

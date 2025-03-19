@@ -9,7 +9,6 @@ class BoopCounter:
         self.filename = filename
         self.total_boops = 0
         self.daily_boops = 0
-        self.counter_enabled = False
         self.last_date = self._get_current_date()
         self._load_data()
 
@@ -54,10 +53,7 @@ class BoopCounter:
             print(f"Error saving boop data: {e}")
 
     def increment_boops(self):
-        """Increment the boop counters if counter is enabled"""
-        if not self.counter_enabled:
-            return False
-
+        """Increment the boop counters"""
         # Check if we need to reset daily count
         current_date = self._get_current_date()
         if current_date != self.last_date:
@@ -70,15 +66,9 @@ class BoopCounter:
         self._save_data()
         return True
 
-    def set_counter_enabled(self, enabled):
-        """Set whether the counter is enabled"""
-        self.counter_enabled = enabled
-        return self.counter_enabled
-
     def get_boops_data(self):
         """Get current boop counts"""
         return {
             "total_boops": self.total_boops,
             "daily_boops": self.daily_boops,
-            "counter_enabled": self.counter_enabled,
         }
