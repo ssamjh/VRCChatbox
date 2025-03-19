@@ -14,41 +14,29 @@ def extract_placeholders(messages):
 
 
 message_config = {
-    "status": {
-        "rotation_interval": 20,
+    "time": {
         "messages": [
-            "{time} - {heart_rate}bpm",
-            "{time} - Watch 🔋: {watch_battery}%",
-            "{time} - Phone 🔋: {phone_battery}%",
-            "{time} - {room_temp}°C {room_temp_f}°F",
-            "{time} - GPU: {gpu_temp}°C",
-            "{time} - Steps: {steps}",
+            "{time}",
         ],
     },
     "boops": {
-        "rotation_interval": 20,
         "messages": [
             "Boops: {daily_boops} ({total_boops})",
         ],
     },
     "joinmymusic_info": {
-        "rotation_interval": 20,
         "messages": [
             "JoinMyMusic.com",
-            "Live Radio Station",
-            "I Take Song Requests",
         ],
     },
-    "joinmymusic_np1": {
-        "rotation_interval": 20,
-        "messages": [
-            "{jmm_song}",
-        ],
-    },
-    "joinmymusic_np2": {
-        "rotation_interval": 20,
+    "joinmymusic_artist": {
         "messages": [
             "{jmm_artist}",
+        ],
+    },
+    "joinmymusic_song": {
+        "messages": [
+            "{jmm_song}",
         ],
     },
 }

@@ -11,7 +11,13 @@ class VRChatMessenger:
     def __init__(self, ip="127.0.0.1", port=9000, listen_port=9001):
         self.client = udp_client.SimpleUDPClient(ip, port)
         self.active_messages = {}
-        self.update_thread = threading.Thread(target=self._update_messages, daemon=True)
+
+        # Initialize messages once
+        self._initialize_messages()
+
+        # Add track of current song to detect changes
+        self.current_song = None
+        self.current_artist = None
 
         # Initialize the boop counter and share it with data_cache
         self.boop_counter = BoopCounter()
@@ -35,13 +41,88 @@ class VRChatMessenger:
             target=self.server.serve_forever, daemon=True
         )
 
+        # Add a thread just for checking song changes
+        self.song_check_thread = threading.Thread(
+            target=self._check_song_changes, daemon=True
+        )
+
         # Start threads
-        self.update_thread.start()
         print(f"Starting OSC listener thread on port {listen_port}...")
         self.server_thread.start()
+        self.song_check_thread.start()
         print(
             f"OSC listener thread started. Waiting for messages on {ip}:{listen_port}"
         )
+
+    def _initialize_messages(self):
+        """Initialize messages once rather than continuously updating them"""
+        for category, config in message_config.items():
+            if category != "placeholders":
+                messages = config["messages"]
+                raw_message = messages[0]  # Always use the first message
+                formatted_message = self._format_message(raw_message)
+                self.active_messages[category] = {
+                    "message": formatted_message,
+                }
+        self.update_display()
+
+    def _check_song_changes(self):
+        """Periodically check for song changes"""
+        while True:
+            if self.check_for_song_change():
+                self.update_display()
+            time.sleep(5)  # Check every 5 seconds
+
+    def check_for_song_change(self):
+        """Check if song has changed and update display if needed"""
+        jmm_data = data_cache.get_jmm_data()
+        if not jmm_data.get("metadata"):
+            return False
+
+        metadata = jmm_data["metadata"]
+        if not metadata["current"]["playing"]:
+            # If music stopped playing, update display to remove music info
+            if self.current_song is not None or self.current_artist is not None:
+                self.current_song = None
+                self.current_artist = None
+                return True
+            return False
+
+        new_song = metadata["current"]["song"]
+        new_artist = (
+            ", ".join(artist["name"] for artist in metadata["current"]["artist"])
+            if metadata["current"]["artist"]
+            else ""
+        )
+
+        if new_song != self.current_song or new_artist != self.current_artist:
+            self.current_song = new_song
+            self.current_artist = new_artist
+
+            # Update the music-related messages
+            if "joinmymusic_song" in self.active_messages:
+                self.active_messages["joinmymusic_song"]["message"] = (
+                    self._format_message(
+                        message_config["joinmymusic_song"]["messages"][0]
+                    )
+                )
+
+            if "joinmymusic_artist" in self.active_messages:
+                self.active_messages["joinmymusic_artist"]["message"] = (
+                    self._format_message(
+                        message_config["joinmymusic_artist"]["messages"][0]
+                    )
+                )
+
+            if "joinmymusic_info" in self.active_messages:
+                self.active_messages["joinmymusic_info"]["message"] = (
+                    self._format_message(
+                        message_config["joinmymusic_info"]["messages"][0]
+                    )
+                )
+
+            return True
+        return False
 
     def _handle_boop(self, address, *args):
         print(f"OSC message received: {address} with args: {args}")
@@ -51,36 +132,20 @@ class VRChatMessenger:
                     f"Boop received! Total: {self.boop_counter.total_boops}, Daily: {self.boop_counter.daily_boops}"
                 )
 
-                # Get current boops message and update it immediately
+                # Update the time message
+                if "time" in self.active_messages:
+                    self.active_messages["time"]["message"] = self._format_message(
+                        message_config["time"]["messages"][0]
+                    )
+
+                # Update the boops message
                 if "boops" in self.active_messages:
-                    current_message = message_config["boops"]["messages"][0]
-                    boops_data = self.boop_counter.get_boops_data()
-
-                    # Format the message with updated boop counts
-                    formatted_message = current_message.format(
-                        daily_boops=boops_data["daily_boops"],
-                        total_boops=boops_data["total_boops"],
+                    self.active_messages["boops"]["message"] = self._format_message(
+                        message_config["boops"]["messages"][0]
                     )
 
-                    # Update the active message
-                    self.active_messages["boops"]["message"] = formatted_message
-
-                    # Send an immediate display update without changing other messages
-                    active_lines = []
-                    for category in message_config:
-                        if (
-                            category != "placeholders"
-                            and category in self.active_messages
-                        ):
-                            message = self.active_messages[category]["message"]
-                            if self._should_show_message(category, message):
-                                active_lines.append(message)
-
-                    combined_message = "\n".join(active_lines)
-                    self.client.send_message(
-                        "/chatbox/input", [combined_message, True, True]
-                    )
-                    print(f"Display updated with new boop count:\n{combined_message}")
+                # Update display
+                self.update_display()
             else:
                 print(f"Boop ignored - counter disabled")
         else:
@@ -90,32 +155,15 @@ class VRChatMessenger:
         print(f"OSC message received: {address} with args: {args}")
         if args:
             enabled = bool(args[0])
+            was_enabled = self.boop_counter.counter_enabled
             self.boop_counter.set_counter_enabled(enabled)
             print(f"Boop counter {'enabled' if enabled else 'disabled'}")
+
+            # Update display if the enabled state changed
+            if was_enabled != enabled:
+                self.update_display()
         else:
             print(f"Boop counter enable message had no arguments")
-
-    def _update_messages(self):
-        while True:
-            for category, config in message_config.items():
-                if category != "placeholders":
-                    if category not in self.active_messages:
-                        self.active_messages[category] = {
-                            "current_index": 0,
-                            "message": "Initializing...",
-                        }
-
-                    messages = config["messages"]
-                    current_index = self.active_messages[category]["current_index"]
-                    raw_message = messages[current_index]
-                    formatted_message = self._format_message(raw_message)
-                    self.active_messages[category]["message"] = formatted_message
-                    self.active_messages[category]["current_index"] = (
-                        current_index + 1
-                    ) % len(messages)
-
-            self.update_display()
-            time.sleep(5)
 
     def _format_message(self, message):
         try:
@@ -128,21 +176,48 @@ class VRChatMessenger:
             return f"Error: Missing placeholder {e}"
 
     def _should_show_message(self, category, message):
-        if category in ["joinmymusic_info", "joinmymusic_np1", "joinmymusic_np2"]:
+        # For boops, only show if counter is enabled
+        if category == "boops":
+            return self.boop_counter.counter_enabled
+
+        # For JoinMyMusic related categories
+        if category.startswith("joinmymusic"):
             jmm_data = data_cache.get_jmm_data()
             if not jmm_data.get("metadata"):
                 return False
             if not jmm_data["metadata"]["current"]["playing"]:
                 return False
-            if not jmm_data["metadata"]["current"]["song"]:
-                return False
+            if category in ["joinmymusic_artist", "joinmymusic_song"]:
+                if not jmm_data["metadata"]["current"]["song"]:
+                    return False
             return True
+
+        # Time is always shown
+        if category == "time":
+            return True
+
         return True
 
     def update_display(self):
+        """Update the display with the current active messages"""
+        # Always update time message first
+        if "time" in self.active_messages:
+            self.active_messages["time"]["message"] = self._format_message(
+                message_config["time"]["messages"][0]
+            )
+
+        # Define the display order
+        display_order = [
+            "time",
+            "boops",
+            "joinmymusic_info",
+            "joinmymusic_artist",
+            "joinmymusic_song",
+        ]
+
         active_lines = []
-        for category in message_config:
-            if category != "placeholders" and category in self.active_messages:
+        for category in display_order:
+            if category in self.active_messages:
                 message = self.active_messages[category]["message"]
                 if self._should_show_message(category, message):
                     active_lines.append(message)
