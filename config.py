@@ -21,7 +21,7 @@ message_config = {
     },
     "boops": {
         "messages": [
-            "Boops: {daily_boops} ({total_boops})",
+            "Boops: {daily_boops} ᵗᵒᵈᵃʸ ({total_boops} ᵗᵒᵗᵃˡ)",
         ],
     },
     "joinmymusic_info": {
