@@ -20,22 +20,19 @@ message_config = {
             "{time} - {heart_rate}bpm",
             "{time} - Watch 🔋: {watch_battery}%",
             "{time} - Phone 🔋: {phone_battery}%",
-            "{time} - Temp: {room_temp}°C {room_temp_f}°F",
-            "{time} - Humidity: {room_humid}%",
-            "{time} - Light Level: {room_light}lux",
+            "{time} - {room_temp}°C {room_temp_f}°F",
             "{time} - GPU: {gpu_temp}°C",
-            "{time} - Daily Steps: {steps}",
-            "{time} - IRL Location: {location}",
+            "{time} - Steps: {steps}",
         ],
     },
     "boops": {
-        "rotation_interval": 10,
+        "rotation_interval": 20,
         "messages": [
-            "Boops: {daily_boops} ({total_boops} total)",
+            "Boops: {daily_boops} ({total_boops})",
         ],
     },
     "joinmymusic_info": {
-        "rotation_interval": 10,
+        "rotation_interval": 20,
         "messages": [
             "JoinMyMusic.com",
             "Live Radio Station",
@@ -43,13 +40,13 @@ message_config = {
         ],
     },
     "joinmymusic_np1": {
-        "rotation_interval": 10,
+        "rotation_interval": 20,
         "messages": [
             "{jmm_song}",
         ],
     },
     "joinmymusic_np2": {
-        "rotation_interval": 10,
+        "rotation_interval": 20,
         "messages": [
             "{jmm_artist}",
         ],
