@@ -104,7 +104,7 @@ class VRChatMessenger:
                     active_lines.append(message)
 
         combined_message = "\n".join(active_lines)
-        self.client.send_message("/chatbox/input", [combined_message, True, True])
+        self.client.send_message("/chatbox/input", [combined_message, True, False])
         print(f"Display updated:\n{combined_message}")
 
     def _initialize_messages(self):
