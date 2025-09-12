@@ -2,3 +2,4 @@ __pycache__/*
 boops.json
 osc.txt
 package-lock.json
+app_config.json

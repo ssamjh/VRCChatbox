@@ -170,11 +170,8 @@ class VRChatMessenger:
             if self.check_for_song_change():
                 # When song changes, hide the boop counter until next boop
                 self.show_boops = False
-                # Only update display if shock info is not currently showing
-                if not self.show_shock_info:
-                    self.request_display_update()
-                else:
-                    print("Skipping display update due to active shock info")
+                # Mark this as a song change update (will be blocked during shock)
+                self.request_display_update(from_song_change=True)
 
             time.sleep(5)  # Check every 5 seconds
 
@@ -334,14 +331,15 @@ class VRChatMessenger:
         self.shock_hide_timer.start()
         
         # Request display update
-        self.request_display_update(force_for_shock=True)
+        self.request_display_update()
     
     def _hide_shock_info(self):
         """Hide shock info display"""
         self.show_shock_info = False
         self.shock_hide_timer = None
-        self.request_display_update(force_for_shock=True)
-        print("Shock info hidden")
+        # Send empty message to clear the chatbox
+        self.client.send_message("/chatbox/input", ["", True, False])
+        print("Shock info hidden - chatbox cleared")
 
     def clear_all_hold_timers(self):
         """Clear all active hold timers"""
@@ -357,10 +355,10 @@ class VRChatMessenger:
         save_app_config(self.app_config)
         self.shock_controller.update_config(shock_config)
 
-    def request_display_update(self, force_for_shock=False):
+    def request_display_update(self, force_for_shock=False, from_song_change=False):
         """Request a display update, respecting rate limits"""
-        if self.show_shock_info and not force_for_shock:
-            print("Blocked display update request - shock info is active")
+        if self.show_shock_info and from_song_change:
+            print("Blocked song change update - shock info is active")
             return
         self.update_needed = True
 
