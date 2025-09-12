@@ -1,9 +1,10 @@
 from pythonosc import udp_client, osc_server, dispatcher
 import time
 import threading
-from config import message_config
+from config import message_config, load_app_config, save_app_config
 from placeholders import get_placeholder_value, data_cache
 from boop_counter import BoopCounter
+from shockosc import ShockOSCController
 
 
 class VRChatMessenger:
@@ -20,9 +21,25 @@ class VRChatMessenger:
         # Simple boop display flag
         self.show_boops = False
 
+        # Load app configuration
+        self.app_config = load_app_config()
+        self.show_music = self.app_config.get("show_music", True)
+
         # Add track of current song to detect changes
         self.current_song = None
         self.current_artist = None
+
+        # Initialize ShockOSC controller with callback
+        self.shock_controller = ShockOSCController(ip, port, self._on_shock_triggered)
+        self.shock_controller.update_config(self.app_config.get("shockosc", {}))
+        
+        # Shock display state
+        self.show_shock_info = False
+        self.shock_hide_timer = None
+        
+        # Contact hold tracking
+        self.contact_start_times = {}  # Track when contact started for each group
+        self.hold_timers = {}  # Track hold timers for each group
 
         # Initialize the boop counter and share it with data_cache
         self.boop_counter = BoopCounter()
@@ -34,6 +51,10 @@ class VRChatMessenger:
         # Setup OSC dispatcher for listening
         self.dispatcher = dispatcher.Dispatcher()
         self.dispatcher.map("/avatar/parameters/OSCBoop", self._handle_boop)
+        
+        # Add ShockOSC parameter listeners
+        self.dispatcher.map("/avatar/parameters/ShockOsc/leftleg", self._handle_shock_trigger)
+        self.dispatcher.map("/avatar/parameters/ShockOsc/rightleg", self._handle_shock_trigger)
 
         # Setup OSC server for listening
         self.server = osc_server.ThreadingOSCUDPServer(
@@ -85,6 +106,7 @@ class VRChatMessenger:
         display_order = [
             "time",
             "boops",
+            "shock_info",  # Shock info overrides music when active
             "joinmymusic_info",
             "joinmymusic_artist",
             "joinmymusic_song",
@@ -222,6 +244,113 @@ class VRChatMessenger:
         else:
             print(f"Boop ignored - value was: {args}")
 
+    def _handle_shock_trigger(self, address, *args):
+        """Handle ShockOSC trigger from contact receivers with hold time logic"""
+        print(f"Shock trigger received: {address} with args: {args}")
+        
+        # Extract group name from address (e.g., "/avatar/parameters/ShockOsc/leftleg" -> "leftleg")
+        group = address.split("/")[-1]
+        
+        if args and args[0]:  # Contact started/maintained
+            current_time = time.time()
+            
+            # If this is a new contact, start tracking
+            if group not in self.contact_start_times:
+                self.contact_start_times[group] = current_time
+                print(f"Contact started for group: {group}")
+                
+                # Get hold time from config
+                hold_time = self.app_config.get("shockosc", {}).get("hold_time", 0.5)
+                
+                # If hold time is 0, trigger immediately
+                if hold_time <= 0:
+                    print(f"No hold time required, triggering shock immediately for group: {group}")
+                    self.shock_controller.send_shock([group])
+                else:
+                    # Schedule shock after hold time
+                    print(f"Starting {hold_time}s hold timer for group: {group}")
+                    hold_timer = threading.Timer(hold_time, self._trigger_held_shock, [group])
+                    self.hold_timers[group] = hold_timer
+                    hold_timer.start()
+        else:  # Contact ended
+            if group in self.contact_start_times:
+                contact_duration = time.time() - self.contact_start_times[group]
+                print(f"Contact ended for group: {group} after {contact_duration:.2f}s")
+                
+                # Cancel any pending shock timer
+                if group in self.hold_timers:
+                    self.hold_timers[group].cancel()
+                    del self.hold_timers[group]
+                    print(f"Cancelled hold timer for group: {group}")
+                
+                # Clear contact tracking
+                del self.contact_start_times[group]
+    
+    def _trigger_held_shock(self, group):
+        """Trigger shock after hold time has been met"""
+        # Check if contact is still active
+        if group in self.contact_start_times:
+            hold_time = self.app_config.get("shockosc", {}).get("hold_time", 0.5)
+            contact_duration = time.time() - self.contact_start_times[group]
+            print(f"Hold time met for group: {group} (held for {contact_duration:.2f}s, required {hold_time}s)")
+            
+            # Send shock to the specific group
+            self.shock_controller.send_shock([group])
+            
+            # Clear the timer reference
+            if group in self.hold_timers:
+                del self.hold_timers[group]
+        else:
+            print(f"Contact no longer active for group: {group}, shock cancelled")
+
+    def _on_shock_triggered(self, intensity, group):
+        """Callback when a shock is triggered"""
+        print(f"Shock callback: {intensity}% on {group}")
+        
+        # Update shock data in cache
+        data_cache.update_shock_data(intensity, group)
+        
+        # Update shock info message
+        if "shock_info" in self.active_messages:
+            self.active_messages["shock_info"]["message"] = self._format_message(
+                message_config["shock_info"]["messages"][0]
+            )
+        
+        # Show shock info
+        self.show_shock_info = True
+        
+        # Cancel any existing hide timer
+        if self.shock_hide_timer:
+            self.shock_hide_timer.cancel()
+        
+        # Set timer to hide shock info after 5 seconds
+        self.shock_hide_timer = threading.Timer(5.0, self._hide_shock_info)
+        self.shock_hide_timer.start()
+        
+        # Request display update
+        self.request_display_update()
+    
+    def _hide_shock_info(self):
+        """Hide shock info display"""
+        self.show_shock_info = False
+        self.shock_hide_timer = None
+        self.request_display_update()
+        print("Shock info hidden")
+
+    def clear_all_hold_timers(self):
+        """Clear all active hold timers"""
+        for group, timer in list(self.hold_timers.items()):
+            timer.cancel()
+            print(f"Cleared hold timer for group: {group}")
+        self.hold_timers.clear()
+        self.contact_start_times.clear()
+
+    def update_shock_config(self, shock_config):
+        """Update ShockOSC configuration"""
+        self.app_config["shockosc"] = shock_config
+        save_app_config(self.app_config)
+        self.shock_controller.update_config(shock_config)
+
     def request_display_update(self):
         """Request a display update, respecting rate limits"""
         self.update_needed = True
@@ -241,8 +370,25 @@ class VRChatMessenger:
         if category == "boops":
             return self.show_boops
 
+        # For shock info - show when active and enabled, overrides music
+        if category == "shock_info":
+            shock_config = self.app_config.get("shockosc", {})
+            if not shock_config.get("show_shock_info", True):
+                return False
+            return self.show_shock_info
+
         # For JoinMyMusic related categories
         if category.startswith("joinmymusic"):
+            # Hide music if shock info is showing (shock overrides music)
+            if self.show_shock_info:
+                shock_config = self.app_config.get("shockosc", {})
+                if shock_config.get("show_shock_info", True):
+                    return False
+            
+            # Check if music display is enabled
+            if not self.show_music:
+                return False
+                
             jmm_data = data_cache.get_jmm_data()
             if not jmm_data.get("metadata"):
                 return False
@@ -259,13 +405,32 @@ class VRChatMessenger:
 
         return True
 
+    def toggle_music_display(self, show_music):
+        """Toggle music display and save to config"""
+        self.show_music = show_music
+        self.app_config["show_music"] = show_music
+        save_app_config(self.app_config)
+        self.request_display_update()
+
 
 def main():
+    import sys
     vrc = VRChatMessenger()
+
+    # Check if GUI mode is requested
+    if "--gui" in sys.argv:
+        try:
+            from gui import show_settings_gui
+            print("Opening settings GUI...")
+            show_settings_gui(vrc)
+        except ImportError:
+            print("GUI not available (tkinter not installed)")
+        return
 
     try:
         print("VRChat Dynamic Chat Message Sender running...")
         print("Listening for boops on port 9001...")
+        print("Run with --gui to open settings")
         print("Press Ctrl+C to exit")
         while True:
             time.sleep(1)

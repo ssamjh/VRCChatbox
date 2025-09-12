@@ -9,6 +9,7 @@ class DataCache:
         self.jmm_last_update = 0
         self.jmm_update_interval = 5
         self.boop_counter = None  # Will be set by VRChatMessenger
+        self.shock_data = {"intensity": 0, "group": "none"}  # Current shock info
 
     def get_jmm_data(self):
         if time.time() - self.jmm_last_update > self.jmm_update_interval:
@@ -34,6 +35,14 @@ class DataCache:
         # Make sure to reload from file each time to get latest values
         self.boop_counter._load_data()
         return self.boop_counter.get_boops_data()
+
+    def update_shock_data(self, intensity, group):
+        """Update current shock data"""
+        self.shock_data = {"intensity": intensity, "group": group}
+
+    def get_shock_data(self):
+        """Get current shock data"""
+        return self.shock_data
 
 
 data_cache = DataCache()
@@ -72,6 +81,12 @@ def get_placeholder_value(placeholder):
         if not jmm_data.get("metadata"):
             return "No data"
         return truncate_text(jmm_data["metadata"]["current"]["song"] or "No song")
+
+    if placeholder == "shock_intensity":
+        return str(data_cache.get_shock_data()["intensity"])
+
+    if placeholder == "shock_group":
+        return data_cache.get_shock_data()["group"]
 
     # If we get here, it's an unknown placeholder
     return f"Error: {placeholder}"
