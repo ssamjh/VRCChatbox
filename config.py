@@ -18,7 +18,10 @@ def load_app_config():
             "groups": ["leftleg", "rightleg"],  # ShockOSC groups to control
             "show_shock_info": True,  # Show shock percentage in chatbox
             "cooldown_delay": 5.0,  # Cooldown delay in seconds (0.0-60.0)
-            "hold_time": 0.5  # Required contact hold time in seconds (0.0-5.0)
+            "hold_time": 0.5,  # Required contact hold time in seconds (0.0-5.0)
+            "openshock_token": "",  # OpenShock API token
+            "shockers": {},  # Shocker ID to group mapping {"shocker_id": "group_name"}
+            "openshock_url": "https://api.openshock.app"  # OpenShock API base URL
         }
     }
     
