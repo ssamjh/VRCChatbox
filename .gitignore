@@ -1,5 +1,4 @@
 __pycache__/*
-boops.json
+*.json
 osc.txt
-package-lock.json
-app_config.json
+.claude/
