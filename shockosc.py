@@ -44,8 +44,8 @@ class ShockOSCController:
             return random.randint(min_val, max_val)
     
     def send_openshock_command(self, shocker_ids, intensity, duration, action_type=1):
-        """Send command to OpenShock API
-        action_type: 0=stop, 1=shock, 2=vibrate, 3=beep
+        """Send command to OpenShock API using v2 endpoint
+        action_type: 0=stop, 1=shock, 2=vibrate, 3=sound
         """
         token = self.config.get("openshock_token", "").strip()
         if not token:
@@ -56,42 +56,31 @@ class ShockOSCController:
             print("No shocker IDs provided")
             return False
         
-        # Prepare the command data
-        actions = []
+        # Prepare the command data for v2 API format
+        shocks = []
         for shocker_id in shocker_ids:
-            actions.append({
+            shocks.append({
                 "id": shocker_id,
                 "type": action_type,
                 "intensity": min(100, max(0, int(intensity))),  # Clamp to 0-100
-                "duration": int(duration * 1000)  # Convert to milliseconds
+                "duration": max(300, min(65535, int(duration * 1000)))  # V2 API requires 300-65535ms
             })
         
         data = {
-            "actions": actions,
+            "shocks": shocks,
             "customName": "VRCChatbox"
         }
         
         headers = {
-            "OpenShockToken": token,
+            "Open-Shock-Token": token,
             "User-Agent": "VRCChatbox-ShockOSC/1.0",
             "Content-Type": "application/json"
         }
         
         try:
-            url = f"{self.config.get('openshock_url', 'https://api.openshock.app')}/1/shockers/control"
-            
-            print(f"DEBUG: Sending OpenShock command")
-            print(f"DEBUG: URL: {url}")
-            headers_debug = dict(headers)
-            headers_debug['OpenShockToken'] = f"{'*' * (len(token) - 4)}{token[-4:]}" if len(token) > 4 else "***"
-            print(f"DEBUG: Headers: {headers_debug}")
-            print(f"DEBUG: Data: {data}")
+            url = f"{self.config.get('openshock_url', 'https://api.openshock.app')}/2/shockers/control"
             
             response = requests.post(url, json=data, headers=headers, timeout=5)
-            
-            print(f"DEBUG: Response status: {response.status_code}")
-            print(f"DEBUG: Response headers: {dict(response.headers)}")
-            print(f"DEBUG: Response text: {response.text}")
             
             if response.status_code == 200:
                 print(f"OpenShock command sent successfully: {len(shocker_ids)} shocker(s), {intensity}%, {duration}s")
@@ -414,26 +403,45 @@ class ShockOSCController:
             return False
         
         headers = {
-            "OpenShockToken": token,
+            "Open-Shock-Token": token,
             "User-Agent": "VRCChatbox-ShockOSC/1.0"
         }
         
         try:
-            url = f"{self.config.get('openshock_url', 'https://api.openshock.app')}/1/devices/own"
-            
-            print(f"DEBUG: Testing OpenShock connection")
-            print(f"DEBUG: URL: {url}")
-            print(f"DEBUG: Token length: {len(token)} characters")
+            url = f"{self.config.get('openshock_url', 'https://api.openshock.app')}/1/shockers/own"
             
             response = requests.get(url, headers=headers, timeout=10)
             
-            print(f"DEBUG: Connection test response status: {response.status_code}")
-            print(f"DEBUG: Connection test response: {response.text[:200]}")  # First 200 chars
-            
             if response.status_code == 200:
-                devices = response.json()
-                shocker_count = sum(len(device.get('shockers', [])) for device in devices)
-                print(f"OpenShock connection successful. Found {len(devices)} device(s) with {shocker_count} shocker(s).")
+                api_response = response.json()
+                
+                # Handle v1 shockers/own response format
+                shocker_count = 0
+                if isinstance(api_response, dict) and 'data' in api_response:
+                    data = api_response['data']
+                    if isinstance(data, list):
+                        # Check if these are direct shockers or devices with shockers
+                        if data and isinstance(data[0], dict) and 'shockers' in data[0]:
+                            # These are devices containing shockers
+                            shocker_count = sum(len(device.get('shockers', [])) for device in data)
+                            print(f"OpenShock connection successful. Found {len(data)} device(s) with {shocker_count} shocker(s).")
+                        else:
+                            # These are direct shockers
+                            shocker_count = len(data)
+                            print(f"OpenShock connection successful. Found {shocker_count} shocker(s).")
+                elif isinstance(api_response, list):
+                    # Direct list of items
+                    if api_response and isinstance(api_response[0], dict) and 'shockers' in api_response[0]:
+                        # These are devices with shockers
+                        shocker_count = sum(len(device.get('shockers', [])) for device in api_response)
+                        print(f"OpenShock connection successful. Found {len(api_response)} device(s) with {shocker_count} shocker(s).")
+                    else:
+                        # These are direct shockers
+                        shocker_count = len(api_response)
+                        print(f"OpenShock connection successful. Found {shocker_count} shocker(s).")
+                else:
+                    print(f"OpenShock connection successful. Response format: {type(api_response)}")
+                    
                 return True
             else:
                 print(f"OpenShock connection failed: {response.status_code} - {response.text}")
@@ -459,3 +467,13 @@ class ShockOSCController:
             print("No OpenShock token configured, test shock will use OSC only")
         
         self.send_shock()
+    
+    def test_leftleg_shock(self):
+        """Test function to send shock to leftleg"""
+        print("Testing leftleg shock...")
+        self.send_shock(groups=["leftleg"])
+    
+    def test_rightleg_shock(self):
+        """Test function to send shock to rightleg"""
+        print("Testing rightleg shock...")
+        self.send_shock(groups=["rightleg"])

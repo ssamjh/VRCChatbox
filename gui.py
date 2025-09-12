@@ -217,9 +217,20 @@ class VRCChatboxGUI:
         self.unassign_button = ttk.Button(assign_frame, text="Unassign", command=self.unassign_shocker)
         self.unassign_button.grid(row=0, column=3, padx=5)
         
+        # Test buttons frame
+        test_frame = ttk.Frame(openshock_frame)
+        test_frame.grid(row=5, column=0, columnspan=2, pady=10, sticky=(tk.W, tk.E))
+        
         # Test shock button
-        self.test_shock_button = ttk.Button(openshock_frame, text="Test Shock", command=self.test_shock)
-        self.test_shock_button.grid(row=5, column=0, columnspan=2, pady=10)
+        self.test_shock_button = ttk.Button(test_frame, text="Test Shock", command=self.test_shock)
+        self.test_shock_button.grid(row=0, column=0, padx=(0, 5))
+        
+        # Test simulation buttons
+        self.test_leftleg_button = ttk.Button(test_frame, text="Test Left Leg", command=self.test_leftleg)
+        self.test_leftleg_button.grid(row=0, column=1, padx=2)
+        
+        self.test_rightleg_button = ttk.Button(test_frame, text="Test Right Leg", command=self.test_rightleg)
+        self.test_rightleg_button.grid(row=0, column=2, padx=(5, 0))
         
         # Configure column weights for proper stretching
         parent.columnconfigure(1, weight=1)
@@ -347,25 +358,20 @@ class VRCChatboxGUI:
                     return
                     
                 base_url = self.config['shockosc'].get('openshock_url', 'https://api.openshock.app')
-                # Try different endpoints - the API docs show multiple possibilities
+                # Use v1 endpoints for discovery since they work with API tokens
+                # v2 /shares endpoint requires session cookies, not API tokens
                 endpoints_to_try = [
-                    "/2/devices",  # Version 2 devices endpoint (preferred)
-                    "/1/devices",  # Version 1 devices endpoint
-                    "/2/shockers", # Version 2 shockers endpoint
-                    "/1/shockers"  # Version 1 shockers endpoint
+                    "/1/shockers/own",    # V1: Get own shockers directly (preferred)
+                    "/1/shockers/shared", # V1: Get shared shockers
+                    "/1/devices/own",     # V1: Fallback to devices with shockers
                 ]
                 
                 headers = {
-                    'OpenShockToken': token,
+                    'Open-Shock-Token': token,
                     'User-Agent': 'VRCChatbox-ShockOSC/1.0',
                     'Accept': 'application/json'
                 }
                 
-                print(f"DEBUG: Attempting to discover shockers")
-                headers_debug = dict(headers)
-                headers_debug['OpenShockToken'] = f"{'*' * (len(token) - 4)}{token[-4:]}" if len(token) > 4 else "***"
-                print(f"DEBUG: Headers: {headers_debug}")
-                print(f"DEBUG: Token length: {len(token)} characters")
                 
                 # Try different endpoints until we find one that works
                 response = None
@@ -373,36 +379,22 @@ class VRCChatboxGUI:
                 
                 for endpoint in endpoints_to_try:
                     url = f"{base_url}{endpoint}"
-                    print(f"DEBUG: Trying endpoint: {url}")
                     
                     try:
                         response = requests.get(url, headers=headers, timeout=10)
-                        print(f"DEBUG: Response status: {response.status_code}")
                         
                         if response.status_code == 200:
-                            print(f"DEBUG: Success with endpoint: {endpoint}")
                             successful_url = url
                             break
                         elif response.status_code == 404:
-                            print(f"DEBUG: Endpoint not found: {endpoint}")
                             continue
                         else:
-                            print(f"DEBUG: Error with {endpoint}: {response.status_code} - {response.text[:200]}")
                             # Continue trying other endpoints for 4xx errors, but break for auth issues
                             if response.status_code == 401:
                                 break
                             continue
                     except requests.RequestException as e:
-                        print(f"DEBUG: Network error with {endpoint}: {e}")
                         continue
-                
-                if not response or response.status_code != 200:
-                    if response:
-                        print(f"DEBUG: Final response status: {response.status_code}")
-                        print(f"DEBUG: Final response headers: {dict(response.headers)}")
-                        print(f"DEBUG: Final response text: {response.text[:500]}")  # First 500 chars
-                    else:
-                        print(f"DEBUG: No successful response from any endpoint")
                 
                 if not response or response.status_code != 200:
                     if not response:
@@ -433,10 +425,6 @@ class VRCChatboxGUI:
                 
                 try:
                     api_response = response.json()
-                    print(f"DEBUG: Successfully parsed JSON response")
-                    print(f"DEBUG: Response type: {type(api_response)}")
-                    print(f"DEBUG: Response keys: {list(api_response.keys()) if isinstance(api_response, dict) else 'Not a dict'}")
-                    print(f"DEBUG: Response sample: {str(api_response)[:300]}")
                 except ValueError as json_err:
                     error_msg = f"Invalid JSON response from API:\n{response.text}\n\nJSON Error: {json_err}"
                     self.root.after(0, lambda: messagebox.showerror("Response Error", error_msg))
@@ -444,26 +432,39 @@ class VRCChatboxGUI:
                 
                 shockers = []
                 
-                # Handle different response formats
+                # Handle different response formats - prioritize v1 shocker endpoints
                 devices = None
-                if isinstance(api_response, list):
+                
+                # Check if this is from the /shockers/* endpoints (v1 API)
+                if isinstance(api_response, dict) and 'data' in api_response:
+                    # OpenShock API typically wraps responses in a 'data' field
+                    data = api_response['data']
+                    
+                    if isinstance(data, list):
+                        # Check if these are direct shockers or devices with shockers
+                        if data and isinstance(data[0], dict) and 'shockers' in data[0]:
+                            # These are devices containing shockers
+                            devices = data
+                        elif data and isinstance(data[0], dict) and ('id' in data[0] or 'name' in data[0]):
+                            # These might be direct shockers
+                            for shocker in data:
+                                shockers.append({
+                                    'id': shocker.get('id'),
+                                    'name': shocker.get('name', f"Shocker {shocker.get('id', 'Unknown')}"),
+                                    'device_name': shocker.get('device', {}).get('name', 'Unknown Device') if isinstance(shocker.get('device'), dict) else 'Unknown Device'
+                                })
+                            devices = None  # Skip device processing below
+                elif isinstance(api_response, list):
                     # Direct list of devices/shockers
                     devices = api_response
-                    print(f"DEBUG: Response is a list with {len(devices)} items")
                 elif isinstance(api_response, dict):
-                    # Check for common wrapper keys
-                    if 'data' in api_response:
-                        devices = api_response['data']
-                        print(f"DEBUG: Found data wrapper with {len(devices) if isinstance(devices, list) else 'non-list'} items")
-                    elif 'devices' in api_response:
+                    # Check for other common wrapper keys
+                    if 'devices' in api_response:
                         devices = api_response['devices'] 
-                        print(f"DEBUG: Found devices key with {len(devices) if isinstance(devices, list) else 'non-list'} items")
                     elif 'shockers' in api_response:
-                        # Direct shockers response
+                        # Direct shockers response (legacy format)
                         direct_shockers = api_response['shockers']
-                        print(f"DEBUG: Found direct shockers response with {len(direct_shockers) if isinstance(direct_shockers, list) else 'non-list'} items")
-                        for i, shocker in enumerate(direct_shockers):
-                            print(f"DEBUG: Direct shocker {i}: {shocker}")
+                        for shocker in direct_shockers:
                             shockers.append({
                                 'id': shocker.get('id'),
                                 'name': shocker.get('name', f"Shocker {shocker.get('id', 'Unknown')}"),
@@ -473,14 +474,10 @@ class VRCChatboxGUI:
                     else:
                         # Response might be a single object or different format
                         devices = [api_response]
-                        print(f"DEBUG: Treating response as single device object")
                 
                 # Process devices if we have them
                 if devices:
-                    print(f"DEBUG: Processing {len(devices)} device(s)")
-                    for i, device in enumerate(devices):
-                        print(f"DEBUG: Device {i}: {device.get('name', 'Unnamed')} - Keys: {list(device.keys()) if isinstance(device, dict) else 'Not a dict'}")
-                        
+                    for device in devices:
                         # Handle different device formats
                         device_shockers = []
                         if isinstance(device, dict):
@@ -491,19 +488,13 @@ class VRCChatboxGUI:
                                 device_shockers = [device]
                         
                         if device_shockers:
-                            print(f"DEBUG: Found {len(device_shockers)} shocker(s) in device")
-                            for j, shocker in enumerate(device_shockers):
-                                print(f"DEBUG: Shocker {j}: {shocker}")
+                            for shocker in device_shockers:
                                 if isinstance(shocker, dict) and 'id' in shocker:
                                     shockers.append({
                                         'id': shocker['id'],
                                         'name': shocker.get('name', f"Shocker {shocker['id']}"),
                                         'device_name': device.get('name', 'Unknown Device') if isinstance(device, dict) else 'Unknown Device'
                                     })
-                        else:
-                            print(f"DEBUG: No shockers found in device {i}")
-                
-                print(f"DEBUG: Total shockers found: {len(shockers)}")
                 
                 # Update UI on main thread
                 self.root.after(0, lambda: self._update_discovered_shockers(shockers))
@@ -634,6 +625,52 @@ class VRCChatboxGUI:
             finally:
                 # Re-enable button
                 self.root.after(0, lambda: self.test_shock_button.config(state='normal', text='Test Shock'))
+        
+        # Start test in background thread
+        threading.Thread(target=test_thread, daemon=True).start()
+    
+    def test_leftleg(self):
+        """Test leftleg shocker"""
+        if not self.messenger or not hasattr(self.messenger, 'shock_controller'):
+            messagebox.showerror("Error", "No shock controller available")
+            return
+        
+        # Disable button during test
+        self.test_leftleg_button.config(state='disabled', text='Testing...')
+        
+        def test_thread():
+            try:
+                # Run the leftleg test
+                self.messenger.shock_controller.test_leftleg_shock()
+                self.root.after(0, lambda: messagebox.showinfo("Test Complete", "Left leg test shock sent!"))
+            except Exception as e:
+                self.root.after(0, lambda: messagebox.showerror("Test Failed", f"Left leg test failed: {str(e)}"))
+            finally:
+                # Re-enable button
+                self.root.after(0, lambda: self.test_leftleg_button.config(state='normal', text='Test Left Leg'))
+        
+        # Start test in background thread
+        threading.Thread(target=test_thread, daemon=True).start()
+    
+    def test_rightleg(self):
+        """Test rightleg shocker"""
+        if not self.messenger or not hasattr(self.messenger, 'shock_controller'):
+            messagebox.showerror("Error", "No shock controller available")
+            return
+        
+        # Disable button during test
+        self.test_rightleg_button.config(state='disabled', text='Testing...')
+        
+        def test_thread():
+            try:
+                # Run the rightleg test
+                self.messenger.shock_controller.test_rightleg_shock()
+                self.root.after(0, lambda: messagebox.showinfo("Test Complete", "Right leg test shock sent!"))
+            except Exception as e:
+                self.root.after(0, lambda: messagebox.showerror("Test Failed", f"Right leg test failed: {str(e)}"))
+            finally:
+                # Re-enable button
+                self.root.after(0, lambda: self.test_rightleg_button.config(state='normal', text='Test Right Leg'))
         
         # Start test in background thread
         threading.Thread(target=test_thread, daemon=True).start()
