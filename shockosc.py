@@ -174,7 +174,13 @@ class ShockOSCController:
             # Get shocker IDs for the available groups
             shocker_ids = []
             for group in available_groups:
-                for shocker_id, assigned_group in shockers_config.items():
+                for shocker_id, assignment_info in shockers_config.items():
+                    # Handle both old format (string) and new format (dict)
+                    if isinstance(assignment_info, dict):
+                        assigned_group = assignment_info.get("group", "")
+                    else:
+                        assigned_group = assignment_info
+                    
                     if assigned_group == group:
                         shocker_ids.append(shocker_id)
             
@@ -243,7 +249,13 @@ class ShockOSCController:
             # Get shocker IDs for the available groups
             shocker_ids = []
             for group in available_groups:
-                for shocker_id, assigned_group in shockers_config.items():
+                for shocker_id, assignment_info in shockers_config.items():
+                    # Handle both old format (string) and new format (dict)
+                    if isinstance(assignment_info, dict):
+                        assigned_group = assignment_info.get("group", "")
+                    else:
+                        assigned_group = assignment_info
+                    
                     if assigned_group == group:
                         shocker_ids.append(shocker_id)
             
@@ -292,7 +304,13 @@ class ShockOSCController:
             # Get shocker IDs for the groups
             shocker_ids = []
             for group in groups:
-                for shocker_id, assigned_group in shockers_config.items():
+                for shocker_id, assignment_info in shockers_config.items():
+                    # Handle both old format (string) and new format (dict)
+                    if isinstance(assignment_info, dict):
+                        assigned_group = assignment_info.get("group", "")
+                    else:
+                        assigned_group = assignment_info
+                    
                     if assigned_group == group:
                         shocker_ids.append(shocker_id)
             

@@ -239,6 +239,9 @@ class VRCChatboxGUI:
         duration_frame.columnconfigure(1, weight=1)
         openshock_frame.columnconfigure(1, weight=1)
         
+        # Convert legacy shocker config format if needed
+        self._convert_legacy_shocker_config()
+        
         # Load existing shocker assignments
         self.refresh_shockers_display()
         
@@ -534,14 +537,36 @@ class VRCChatboxGUI:
         for item in self.shockers_tree.get_children():
             self.shockers_tree.delete(item)
         
-        # Add discovered shockers
+        shock_config = self.config.get("shockosc", {})
+        assigned_shockers = shock_config.get("shockers", {})
+        
+        # Add discovered shockers if available
         if hasattr(self, 'discovered_shockers'):
-            shock_config = self.config.get("shockosc", {})
-            assigned_shockers = shock_config.get("shockers", {})
-            
             for shocker_id, shocker in self.discovered_shockers.items():
-                group = assigned_shockers.get(shocker_id, "")
+                # Check if we have saved assignment info
+                if shocker_id in assigned_shockers:
+                    if isinstance(assigned_shockers[shocker_id], dict):
+                        group = assigned_shockers[shocker_id].get("group", "")
+                    else:
+                        # Legacy format - just the group string
+                        group = assigned_shockers[shocker_id]
+                else:
+                    group = ""
                 display_name = f"{shocker['name']} ({shocker['device_name']})"
+                self.shockers_tree.insert('', 'end', values=(display_name, shocker_id, group))
+        else:
+            # If no discovered shockers yet, show saved assignments from config
+            for shocker_id, assignment_info in assigned_shockers.items():
+                if isinstance(assignment_info, dict):
+                    # New format with complete info
+                    group = assignment_info.get("group", "")
+                    name = assignment_info.get("name", f"Shocker {shocker_id[:8]}...")
+                    device_name = assignment_info.get("device_name", "Unknown Device")
+                    display_name = f"{name} ({device_name})"
+                else:
+                    # Legacy format - just the group string
+                    group = assignment_info
+                    display_name = f"Shocker {shocker_id[:8]}..."
                 self.shockers_tree.insert('', 'end', values=(display_name, shocker_id, group))
     
     def assign_shocker(self):
@@ -560,11 +585,21 @@ class VRCChatboxGUI:
         item = self.shockers_tree.item(selection[0])
         shocker_id = item['values'][1]
         
-        # Update config
+        # Get full shocker info for saving
+        shocker_info = None
+        if hasattr(self, 'discovered_shockers') and shocker_id in self.discovered_shockers:
+            shocker_info = self.discovered_shockers[shocker_id]
+        
+        # Update config with complete shocker information
         if "shockers" not in self.config["shockosc"]:
             self.config["shockosc"]["shockers"] = {}
         
-        self.config["shockosc"]["shockers"][shocker_id] = group
+        # Save complete shocker info instead of just group
+        self.config["shockosc"]["shockers"][shocker_id] = {
+            "group": group,
+            "name": shocker_info.get('name', f"Shocker {shocker_id[:8]}...") if shocker_info else f"Shocker {shocker_id[:8]}...",
+            "device_name": shocker_info.get('device_name', 'Unknown Device') if shocker_info else 'Unknown Device'
+        }
         save_app_config(self.config)
         
         # Update messenger if available
@@ -674,6 +709,27 @@ class VRCChatboxGUI:
         
         # Start test in background thread
         threading.Thread(target=test_thread, daemon=True).start()
+    
+    def _convert_legacy_shocker_config(self):
+        """Convert legacy shocker config format (string) to new format (dict)"""
+        shock_config = self.config.get("shockosc", {})
+        shockers_config = shock_config.get("shockers", {})
+        
+        # Check if we have any legacy entries to convert
+        needs_save = False
+        for shocker_id, assignment_info in shockers_config.items():
+            if isinstance(assignment_info, str):
+                # This is a legacy entry - convert it
+                shockers_config[shocker_id] = {
+                    "group": assignment_info,
+                    "name": f"Shocker {shocker_id[:8]}...",
+                    "device_name": "Unknown Device"
+                }
+                needs_save = True
+        
+        # Save if we made changes
+        if needs_save:
+            save_app_config(self.config)
         
     def run(self):
         """Run the GUI"""
