@@ -11,14 +11,14 @@ def load_app_config():
         "shockosc": {
             "enabled": False,
             "mode": "static",  # "static" or "random"
-            "static_intensity": 50,  # 0-100
-            "random_min": 20,  # 0-100
-            "random_max": 80,  # 0-100
+            "static_intensity": 20,  # 0-100
+            "random_min": 30,  # 0-100
+            "random_max": 70,  # 0-100
             "duration": 1.0,  # 0.3-30.0 seconds
             "groups": ["leftleg", "rightleg"],  # ShockOSC groups to control
             "show_shock_info": True,  # Show shock percentage in chatbox
-            "cooldown_delay": 5.0,  # Cooldown delay in seconds (0.0-60.0)
-            "hold_time": 0.5,  # Required contact hold time in seconds (0.0-5.0)
+            "cooldown_delay": 3.0,  # Cooldown delay in seconds (0.0-60.0)
+            "hold_time": 0.1,  # Required contact hold time in seconds (0.0-5.0)
             "openshock_token": "",  # OpenShock API token
             "shockers": {},  # Shocker ID to group mapping {"shocker_id": "group_name"}
             "openshock_url": "https://api.openshock.app"  # OpenShock API base URL
