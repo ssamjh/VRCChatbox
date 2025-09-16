@@ -227,15 +227,15 @@ class ShockOSCController:
                 
                 # Schedule stop command after duration
                 self._schedule_shock_stop(group, duration)
-        
+
         # Handle cooldown and callbacks for all groups
         for group in available_groups:
             # Start cooldown for this group
             self.start_cooldown(group)
-            
+
             # Notify callback about the shock
             if self.shock_callback:
-                self.shock_callback(intensity, group)
+                self.shock_callback(intensity, group, duration)
     
     def send_immediate_shock(self, groups=None):
         """Send immediate shock (ignores hold time)"""
@@ -292,15 +292,15 @@ class ShockOSCController:
                 osc_address = f"/avatar/parameters/ShockOsc/{group}_IShock"
                 self.client.send_message(osc_address, True)
                 print(f"Sent: {osc_address} = True")
-        
+
         # Handle cooldown and callbacks for all groups
         for group in available_groups:
             # Start cooldown for this group
             self.start_cooldown(group)
-            
+
             # Notify callback about the shock
             if self.shock_callback:
-                self.shock_callback(intensity, group)
+                self.shock_callback(intensity, group, duration)
     
     def send_vibrate(self, groups=None):
         """Send vibration command"""
@@ -467,12 +467,24 @@ class ShockOSCController:
     def _run_signalr_connection(self):
         """Run SignalR connection in a separate thread"""
         try:
+            # Check if there's already a running loop in this thread
+            try:
+                existing_loop = asyncio.get_running_loop()
+                if existing_loop:
+                    print("Existing event loop detected, stopping it first...")
+                    existing_loop.close()
+            except RuntimeError:
+                # No running loop, which is what we want
+                pass
+
             # Create new event loop for this thread
             self.signalr_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self.signalr_loop)
 
             # Run the async connection
             self.signalr_loop.run_until_complete(self._async_signalr_connection())
+        except asyncio.CancelledError:
+            print("SignalR connection was cancelled")
         except Exception as e:
             print(f"SignalR connection error: {e}")
         finally:
@@ -484,15 +496,27 @@ class ShockOSCController:
                     for task in pending:
                         task.cancel()
 
-                    # Wait for tasks to finish cancellation
+                    # Wait for tasks to finish cancellation with timeout
                     if pending:
-                        self.signalr_loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                        try:
+                            self.signalr_loop.run_until_complete(
+                                asyncio.wait_for(
+                                    asyncio.gather(*pending, return_exceptions=True),
+                                    timeout=5.0
+                                )
+                            )
+                        except asyncio.TimeoutError:
+                            print("Timeout waiting for tasks to cancel")
 
                     # Now close the loop
                     self.signalr_loop.close()
                 except Exception as e:
                     print(f"Error closing SignalR loop: {e}")
+
+            # Clear the loop reference
             self.signalr_loop = None
+            # Reset the thread-local event loop
+            asyncio.set_event_loop(None)
 
     async def _async_signalr_connection(self):
         """Async SignalR connection method - based on test_openshock_signalr_fixed.py"""
@@ -688,6 +712,24 @@ class ShockOSCController:
                 type_names = {1: "shock", 2: "vibrate", 3: "sound"}
                 type_name = type_names.get(shock_type, f"type{shock_type}")
 
+                # Only process shock events, ignore vibrate and sound
+                if shock_type != 1:  # Only process shocks (type 1)
+                    continue
+
+                # Find the group name for this shocker ID
+                group_name = None
+                shockers_config = self.config.get("shockers", {})
+                for stored_shocker_id, assignment_info in shockers_config.items():
+                    if stored_shocker_id == shocker_id:
+                        if isinstance(assignment_info, dict):
+                            group_name = assignment_info.get("group", "")
+                        else:
+                            group_name = assignment_info
+                        break
+
+                # Use group name if found, otherwise fall back to shocker name
+                display_shocker_name = group_name if group_name else shocker_name
+
                 print(f"🔥 Internet {type_name} received!")
                 print(f"   From: {display_name} ({user_name})")
                 print(f"   Shocker: {shocker_name} ({shocker_id})")
@@ -700,7 +742,7 @@ class ShockOSCController:
                     self.internet_shock_callback(
                         user_name=display_name,
                         real_name=user_name,
-                        shocker_name=shocker_name,
+                        shocker_name=display_shocker_name,
                         type_name=type_name,
                         intensity=intensity,
                         duration=duration,

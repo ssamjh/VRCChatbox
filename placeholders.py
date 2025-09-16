@@ -9,7 +9,7 @@ class DataCache:
         self.jmm_last_update = 0
         self.jmm_update_interval = 5
         self.boop_counter = None  # Will be set by VRChatMessenger
-        self.shock_data = {"intensity": 0, "group": "none"}  # Current shock info
+        self.shock_data = {"intensity": 0, "group": "none", "duration": 0}  # Current shock info
         self.internet_shock_data = {
             "user_name": "Unknown",
             "real_name": "Unknown",
@@ -46,9 +46,9 @@ class DataCache:
         self.boop_counter._load_data()
         return self.boop_counter.get_boops_data()
 
-    def update_shock_data(self, intensity, group):
+    def update_shock_data(self, intensity, group, duration=0):
         """Update current shock data"""
-        self.shock_data = {"intensity": intensity, "group": group}
+        self.shock_data = {"intensity": intensity, "group": group, "duration": duration}
 
     def get_shock_data(self):
         """Get current shock data"""
@@ -114,6 +114,10 @@ def get_placeholder_value(placeholder):
 
     if placeholder == "shock_group":
         return data_cache.get_shock_data()["group"]
+
+    if placeholder == "shock_duration":
+        duration = data_cache.get_shock_data()["duration"]
+        return f"{duration:.1f}s" if duration else "0s"
 
     # Internet shock placeholders
     if placeholder == "internet_shock_user":

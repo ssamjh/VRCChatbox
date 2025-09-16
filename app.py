@@ -1,7 +1,7 @@
 from pythonosc import udp_client, osc_server, dispatcher
 import time
 import threading
-from config import message_config, load_app_config, save_app_config
+from config import message_config, load_app_config, save_app_config, reload_message_config
 from placeholders import get_placeholder_value, data_cache
 from boop_counter import BoopCounter
 from shockosc import ShockOSCController
@@ -320,12 +320,12 @@ class VRChatMessenger:
         else:
             print(f"Contact no longer active for group: {group}, shock cancelled")
 
-    def _on_shock_triggered(self, intensity, group):
+    def _on_shock_triggered(self, intensity, group, duration=0):
         """Callback when a shock is triggered"""
         print(f"Shock callback: {intensity}% on {group}")
-        
+
         # Update shock data in cache
-        data_cache.update_shock_data(intensity, group)
+        data_cache.update_shock_data(intensity, group, duration)
         
         # Update shock info message
         if "shock_info" in self.active_messages:
@@ -401,9 +401,9 @@ class VRChatMessenger:
         """Hide internet shock info display"""
         self.show_internet_shock_info = False
         self.internet_shock_hide_timer = None
-        # Don't clear chatbox automatically - let regular display logic handle it
-        self.request_display_update()
-        print("Internet shock info hidden")
+        # Send empty message to clear the chatbox (same behavior as OSC shocks)
+        self.client.send_message("/chatbox/input", ["", True, False])
+        print("Internet shock info hidden - chatbox cleared")
 
     def clear_all_hold_timers(self):
         """Clear all active hold timers"""
@@ -418,6 +418,12 @@ class VRChatMessenger:
         self.app_config["shockosc"] = shock_config
         save_app_config(self.app_config)
         self.shock_controller.update_config(shock_config)
+
+    def update_app_config(self, new_config):
+        """Update full app configuration including messages"""
+        self.app_config.update(new_config)
+        save_app_config(self.app_config)
+        reload_message_config()  # Reload message templates from updated config
 
     def cleanup(self):
         """Clean up resources when shutting down"""
