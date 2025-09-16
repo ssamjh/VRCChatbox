@@ -85,13 +85,23 @@ class VRCChatboxGUI:
             variable=self.shock_show_info_var,
             command=self.on_shock_settings_change
         )
-        show_info_checkbox.grid(row=1, column=0, columnspan=3, sticky=tk.W, pady=(0, 10))
+        show_info_checkbox.grid(row=1, column=0, columnspan=3, sticky=tk.W, pady=(0, 5))
+
+        # Show internet shocks toggle
+        self.shock_show_internet_var = tk.BooleanVar(value=shock_config.get("show_internet_shocks", True))
+        show_internet_checkbox = ttk.Checkbutton(
+            parent,
+            text="Show internet shocks in chatbox",
+            variable=self.shock_show_internet_var,
+            command=self.on_shock_settings_change
+        )
+        show_internet_checkbox.grid(row=2, column=0, columnspan=3, sticky=tk.W, pady=(0, 10))
         
         # Mode selection
-        ttk.Label(parent, text="Mode:").grid(row=2, column=0, sticky=tk.W, pady=5)
+        ttk.Label(parent, text="Mode:").grid(row=3, column=0, sticky=tk.W, pady=5)
         self.shock_mode_var = tk.StringVar(value=shock_config.get("mode", "static"))
         mode_frame = ttk.Frame(parent)
-        mode_frame.grid(row=2, column=1, columnspan=2, sticky=tk.W, pady=5)
+        mode_frame.grid(row=3, column=1, columnspan=2, sticky=tk.W, pady=5)
         
         static_radio = ttk.Radiobutton(mode_frame, text="Static", variable=self.shock_mode_var, 
                                      value="static", command=self.on_mode_change)
@@ -103,7 +113,7 @@ class VRCChatboxGUI:
         
         # Static intensity slider
         self.static_frame = ttk.LabelFrame(parent, text="Static Settings", padding="10")
-        self.static_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
+        self.static_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
         
         ttk.Label(self.static_frame, text="Intensity:").grid(row=0, column=0, sticky=tk.W)
         self.static_intensity_var = tk.IntVar(value=shock_config.get("static_intensity", 50))
@@ -116,7 +126,7 @@ class VRCChatboxGUI:
         
         # Random intensity sliders
         self.random_frame = ttk.LabelFrame(parent, text="Random Settings", padding="10")
-        self.random_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
+        self.random_frame.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
         
         ttk.Label(self.random_frame, text="Min:").grid(row=0, column=0, sticky=tk.W)
         self.random_min_var = tk.IntVar(value=shock_config.get("random_min", 20))
@@ -138,7 +148,7 @@ class VRCChatboxGUI:
         
         # Duration setting
         duration_frame = ttk.LabelFrame(parent, text="Duration & Cooldown", padding="10")
-        duration_frame.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
+        duration_frame.grid(row=6, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
         
         ttk.Label(duration_frame, text="Shock Length:").grid(row=0, column=0, sticky=tk.W)
         self.duration_var = tk.DoubleVar(value=shock_config.get("duration", 1.0))
@@ -169,7 +179,7 @@ class VRCChatboxGUI:
         
         # OpenShock settings
         openshock_frame = ttk.LabelFrame(parent, text="OpenShock Integration", padding="10")
-        openshock_frame.grid(row=6, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
+        openshock_frame.grid(row=7, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
         
         # API Token
         ttk.Label(openshock_frame, text="API Token:").grid(row=0, column=0, sticky=tk.W, pady=5)
@@ -295,6 +305,7 @@ class VRCChatboxGUI:
             "random_max": int(self.random_max_var.get()),
             "duration": round(self.duration_var.get(), 1),
             "show_shock_info": self.shock_show_info_var.get(),
+            "show_internet_shocks": self.shock_show_internet_var.get(),
             "cooldown_delay": round(self.cooldown_var.get(), 1),
             "hold_time": round(self.hold_time_var.get(), 2),
             "openshock_token": self.token_var.get() if hasattr(self, 'token_var') else self.config["shockosc"].get("openshock_token", ""),

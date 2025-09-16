@@ -2,6 +2,11 @@ import random
 import threading
 import time
 import requests
+import asyncio
+import json
+import websockets
+import requests
+from urllib.parse import urlencode
 from pythonosc import udp_client
 
 
@@ -22,17 +27,33 @@ class ShockOSCController:
             "hold_time": 0.5,
             "openshock_token": "",
             "shockers": {},
-            "openshock_url": "https://api.openshock.app"
+            "openshock_url": "https://api.openshock.app",
+            "show_internet_shocks": True
         }
         self.active_shocks = {}  # Track active shock timers
         self.cooldown_timers = {}  # Track cooldown timers per group
         self.cooldown_states = {}  # Track which groups are on cooldown
         self.shock_callback = shock_callback  # Callback to notify about shocks
+
+        # SignalR connection properties
+        self.websocket = None
+        self.signalr_thread = None
+        self.signalr_loop = None
+        self.signalr_connected = False
+        self.internet_shock_callback = None
         
     def update_config(self, new_config):
         """Update ShockOSC configuration"""
         self.config.update(new_config)
         print(f"ShockOSC config updated: {self.config}")
+
+        # Start or restart SignalR connection if token is available
+        if new_config.get("openshock_token"):
+            self.start_signalr_connection()
+
+    def set_internet_shock_callback(self, callback):
+        """Set callback function for internet shock events"""
+        self.internet_shock_callback = callback
         
     def get_shock_intensity(self):
         """Get shock intensity based on current mode"""
@@ -413,6 +434,284 @@ class ShockOSCController:
             status[group] = self.is_group_on_cooldown(group)
         return status
 
+    def start_signalr_connection(self):
+        """Start SignalR connection to receive real-time shock events"""
+        token = self.config.get("openshock_token", "").strip()
+        if not token:
+            print("No OpenShock token configured, skipping SignalR connection")
+            return
+
+        # Stop existing connection if running
+        self.stop_signalr_connection()
+
+        print("Starting OpenShock SignalR connection...")
+        self.signalr_thread = threading.Thread(target=self._run_signalr_connection, daemon=True)
+        self.signalr_thread.start()
+
+    def stop_signalr_connection(self):
+        """Stop SignalR connection"""
+        if self.websocket and self.signalr_connected:
+            print("Stopping OpenShock SignalR connection...")
+            try:
+                if self.signalr_loop and not self.signalr_loop.is_closed():
+                    asyncio.run_coroutine_threadsafe(
+                        self.websocket.close(), self.signalr_loop
+                    )
+            except Exception as e:
+                print(f"Error stopping SignalR connection: {e}")
+
+        self.signalr_connected = False
+        self.websocket = None
+        self.signalr_loop = None
+
+    def _run_signalr_connection(self):
+        """Run SignalR connection in a separate thread"""
+        try:
+            # Create new event loop for this thread
+            self.signalr_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self.signalr_loop)
+
+            # Run the async connection
+            self.signalr_loop.run_until_complete(self._async_signalr_connection())
+        except Exception as e:
+            print(f"SignalR connection error: {e}")
+        finally:
+            # Properly close the event loop
+            if self.signalr_loop and not self.signalr_loop.is_closed():
+                try:
+                    # Cancel all pending tasks
+                    pending = asyncio.all_tasks(self.signalr_loop)
+                    for task in pending:
+                        task.cancel()
+
+                    # Wait for tasks to finish cancellation
+                    if pending:
+                        self.signalr_loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+
+                    # Now close the loop
+                    self.signalr_loop.close()
+                except Exception as e:
+                    print(f"Error closing SignalR loop: {e}")
+            self.signalr_loop = None
+
+    async def _async_signalr_connection(self):
+        """Async SignalR connection method - based on test_openshock_signalr_fixed.py"""
+        try:
+            api_url = self.config.get('openshock_url', 'https://api.openshock.app')
+            token = self.config.get("openshock_token", "").strip()
+
+            # First, let's try to negotiate with SignalR
+            await self.signalr_negotiate(api_url, token)
+
+            # Build the SignalR connection URL - use API endpoint for SignalR
+            # Convert https://api.shock.sjh.at to wss://api.shock.sjh.at
+            ws_url = api_url.replace('https://', 'wss://').replace('http://', 'ws://')
+            hub_url = f"{ws_url}/1/hubs/user"
+
+            print(f"Connecting to OpenShock SignalR at: {hub_url}")
+
+            # Connect using websockets with authentication header
+            headers = {
+                'User-Agent': 'VRCChatbox-ShockOSC/1.0',
+                'Open-Shock-Token': token
+            }
+
+            # Add token as query parameter as well
+            params = {'access_token': token}
+            full_url = f"{hub_url}?{urlencode(params)}"
+
+            print(f"Full WebSocket URL: {full_url}")
+
+            self.websocket = await websockets.connect(
+                full_url,
+                additional_headers=headers,
+                ping_interval=30,
+                ping_timeout=10
+            )
+
+            self.signalr_connected = True
+            print("✅ Connected to OpenShock SignalR!")
+            print("🎯 Listening for real-time shock events...")
+
+            # Send SignalR handshake
+            await self.send_signalr_handshake()
+
+            # Listen for messages
+            await self.listen_for_messages()
+
+        except Exception as e:
+            print(f"❌ SignalR connection error: {e}")
+            self.signalr_connected = False
+
+    async def signalr_negotiate(self, api_url, token):
+        """Negotiate SignalR connection"""
+        try:
+            negotiate_url = f"{api_url}/1/hubs/user/negotiate"
+            headers = {
+                'Open-Shock-Token': token,
+                'User-Agent': 'VRCChatbox-ShockOSC/1.0',
+                'Content-Type': 'application/json'
+            }
+
+            print(f"Negotiating SignalR connection: {negotiate_url}")
+
+            response = requests.post(negotiate_url, headers=headers, timeout=10)
+
+            if response.status_code == 200:
+                negotiate_data = response.json()
+                print(f"✅ SignalR negotiation successful!")
+                print(f"📊 Negotiate response: {json.dumps(negotiate_data, indent=2)}")
+                return negotiate_data
+            else:
+                print(f"❌ SignalR negotiation failed: {response.status_code} - {response.text}")
+                return None
+
+        except Exception as e:
+            print(f"❌ SignalR negotiation error: {e}")
+            return None
+
+    async def send_signalr_handshake(self):
+        """Send SignalR handshake message"""
+        try:
+            handshake_message = {
+                "protocol": "json",
+                "version": 1
+            }
+
+            # SignalR handshake format: message + 0x1E delimiter
+            handshake = json.dumps(handshake_message) + "\x1e"
+
+            print(f"Sending SignalR handshake: {handshake}")
+            await self.websocket.send(handshake)
+
+        except Exception as e:
+            print(f"❌ Error sending handshake: {e}")
+
+    async def listen_for_messages(self):
+        """Listen for incoming SignalR messages"""
+        try:
+            async for message in self.websocket:
+                await self.handle_signalr_message(message)
+        except websockets.exceptions.ConnectionClosed:
+            print("❌ WebSocket connection closed")
+            self.signalr_connected = False
+        except Exception as e:
+            print(f"❌ Error listening for messages: {e}")
+            self.signalr_connected = False
+
+    async def handle_signalr_message(self, message):
+        """Handle incoming SignalR messages"""
+        try:
+            # SignalR messages are delimited by 0x1E
+            if isinstance(message, str):
+                messages = message.split('\x1e')
+                for msg in messages:
+                    if msg.strip():
+                        await self.parse_signalr_message(msg.strip())
+            else:
+                print(f"📝 Binary message: {message}")
+
+        except Exception as e:
+            print(f"❌ Error handling message: {e}")
+
+    async def parse_signalr_message(self, message):
+        """Parse individual SignalR message"""
+        try:
+            # Try to parse as JSON
+            try:
+                data = json.loads(message)
+
+                # Handle different SignalR message types
+                if isinstance(data, dict):
+                    if 'target' in data and 'arguments' in data:
+                        target = data.get('target')
+                        args = data.get('arguments', [])
+
+                        if target == 'Log':
+                            await self.handle_log_event(args)
+                        elif target == 'Welcome':
+                            print(f"🔍 SignalR Welcome: {args}")
+                        elif target == 'DeviceStatus':
+                            print(f"🔍 SignalR DeviceStatus: {args}")
+                        else:
+                            print(f"🔍 SignalR event - Target: {target}, Args: {args}")
+
+                    elif 'type' in data:
+                        msg_type = data.get('type')
+                        if msg_type == 6:  # Ping message
+                            print(f"🏓 SignalR ping")
+                        else:
+                            print(f"📝 Other SignalR message: {data}")
+
+            except json.JSONDecodeError:
+                print(f"📝 Non-JSON message: {message}")
+
+        except Exception as e:
+            print(f"❌ Error parsing message: {e}")
+
+    async def handle_log_event(self, args):
+        """Handle 'Log' events from SignalR - these contain shock events from internet users"""
+        try:
+            if not args or len(args) < 2:
+                return
+
+            # Log events have two arguments: user info and shock data array
+            user_info = args[0] if args[0] else {}
+            shock_events = args[1] if len(args) > 1 and args[1] else []
+
+            # Process each shock event in the array
+            for shock_event in shock_events:
+                if not isinstance(shock_event, dict):
+                    continue
+
+                shocker_info = shock_event.get('shocker', {})
+                shock_type = shock_event.get('type', 0)
+                intensity = shock_event.get('intensity', 0)
+                duration = shock_event.get('duration', 0)
+                executed_at = shock_event.get('executedAt', '')
+
+                # Extract user information
+                user_name = user_info.get('name', 'Unknown User')
+                custom_name = user_info.get('customName')
+                connection_id = user_info.get('connectionId', '')
+                additional_items = user_info.get('additionalItems', {})
+                share_link_id = additional_items.get('shareLinkId') if additional_items else None
+
+                # Use custom name if available, otherwise use regular name
+                display_name = custom_name if custom_name else user_name
+
+                # Extract shocker information
+                shocker_name = shocker_info.get('name', 'Unknown Shocker')
+                shocker_id = shocker_info.get('id', 'Unknown')
+
+                # Map shock types (1=shock, 2=vibrate, 3=sound)
+                type_names = {1: "shock", 2: "vibrate", 3: "sound"}
+                type_name = type_names.get(shock_type, f"type{shock_type}")
+
+                print(f"🔥 Internet {type_name} received!")
+                print(f"   From: {display_name} ({user_name})")
+                print(f"   Shocker: {shocker_name} ({shocker_id})")
+                print(f"   Intensity: {intensity}%, Duration: {duration}ms")
+                if share_link_id:
+                    print(f"   Via share link: {share_link_id}")
+
+                # Call the internet shock callback if available
+                if self.internet_shock_callback:
+                    self.internet_shock_callback(
+                        user_name=display_name,
+                        real_name=user_name,
+                        shocker_name=shocker_name,
+                        type_name=type_name,
+                        intensity=intensity,
+                        duration=duration,
+                        is_guest=user_info.get('id') == "00000000-0000-0000-0000-000000000000",
+                        share_link_id=share_link_id
+                    )
+
+        except Exception as e:
+            print(f"Error processing internet shock event: {e}")
+
+
     def test_openshock_connection(self):
         """Test OpenShock API connection"""
         token = self.config.get("openshock_token", "").strip()
@@ -469,10 +768,28 @@ class ShockOSCController:
             print(f"OpenShock connection error: {e}")
             return False
 
+    def cleanup(self):
+        """Clean up resources when shutting down"""
+        print("Cleaning up ShockOSC controller...")
+        self.stop_signalr_connection()
+
+        # Cancel all timers
+        for timer in list(self.active_shocks.values()):
+            timer.cancel()
+        self.active_shocks.clear()
+
+        for timer in list(self.cooldown_timers.values()):
+            timer.cancel()
+        self.cooldown_timers.clear()
+
+        # Clear shock hide timer
+        if hasattr(self, 'shock_hide_timer') and self.shock_hide_timer:
+            self.shock_hide_timer.cancel()
+
     def test_shock(self):
         """Send a test shock"""
         print("Sending test shock...")
-        
+
         # Test OpenShock connection first if configured
         token = self.config.get("openshock_token", "").strip()
         if token:
@@ -483,7 +800,7 @@ class ShockOSCController:
                 print("OpenShock connection failed, test shock will use OSC fallback")
         else:
             print("No OpenShock token configured, test shock will use OSC only")
-        
+
         self.send_shock()
     
     def test_leftleg_shock(self):

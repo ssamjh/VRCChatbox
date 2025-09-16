@@ -2,3 +2,5 @@ __pycache__/*
 *.json
 .claude/
 /ShockOsc
+test_openshock_signalr_fixed.py
+test.bat

@@ -10,6 +10,16 @@ class DataCache:
         self.jmm_update_interval = 5
         self.boop_counter = None  # Will be set by VRChatMessenger
         self.shock_data = {"intensity": 0, "group": "none"}  # Current shock info
+        self.internet_shock_data = {
+            "user_name": "Unknown",
+            "real_name": "Unknown",
+            "shocker_name": "Unknown",
+            "type_name": "shock",
+            "intensity": 0,
+            "duration": 0,
+            "is_guest": False,
+            "share_link_id": None
+        }  # Current internet shock info
 
     def get_jmm_data(self):
         if time.time() - self.jmm_last_update > self.jmm_update_interval:
@@ -43,6 +53,23 @@ class DataCache:
     def get_shock_data(self):
         """Get current shock data"""
         return self.shock_data
+
+    def update_internet_shock_data(self, user_name, real_name, shocker_name, type_name, intensity, duration, is_guest=False, share_link_id=None):
+        """Update current internet shock data"""
+        self.internet_shock_data = {
+            "user_name": user_name,
+            "real_name": real_name,
+            "shocker_name": shocker_name,
+            "type_name": type_name,
+            "intensity": intensity,
+            "duration": duration,
+            "is_guest": is_guest,
+            "share_link_id": share_link_id
+        }
+
+    def get_internet_shock_data(self):
+        """Get current internet shock data"""
+        return self.internet_shock_data
 
 
 data_cache = DataCache()
@@ -87,6 +114,23 @@ def get_placeholder_value(placeholder):
 
     if placeholder == "shock_group":
         return data_cache.get_shock_data()["group"]
+
+    # Internet shock placeholders
+    if placeholder == "internet_shock_user":
+        return data_cache.get_internet_shock_data()["user_name"]
+
+    if placeholder == "internet_shock_type":
+        return data_cache.get_internet_shock_data()["type_name"]
+
+    if placeholder == "internet_shock_intensity":
+        return str(data_cache.get_internet_shock_data()["intensity"])
+
+    if placeholder == "internet_shock_shocker":
+        return data_cache.get_internet_shock_data()["shocker_name"]
+
+    if placeholder == "internet_shock_duration":
+        duration_ms = data_cache.get_internet_shock_data()["duration"]
+        return f"{duration_ms/1000:.1f}s" if duration_ms else "0s"
 
     # If we get here, it's an unknown placeholder
     return f"Error: {placeholder}"

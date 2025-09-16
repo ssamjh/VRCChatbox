@@ -21,7 +21,8 @@ def load_app_config():
             "hold_time": 0.1,  # Required contact hold time in seconds (0.0-5.0)
             "openshock_token": "",  # OpenShock API token
             "shockers": {},  # Shocker ID to group mapping {"shocker_id": "group_name"}
-            "openshock_url": "https://api.openshock.app"  # OpenShock API base URL
+            "openshock_url": "https://api.openshock.app",  # OpenShock API base URL
+            "show_internet_shocks": True  # Show shocks from internet users in chatbox
         }
     }
     
@@ -85,6 +86,11 @@ message_config = {
     "shock_info": {
         "messages": [
             "⚡ Shock: {shock_intensity}% ({shock_group})",
+        ],
+    },
+    "internet_shock_info": {
+        "messages": [
+            "⚡ {internet_shock_intensity}% {internet_shock_duration} {internet_shock_user} ({internet_shock_shocker})",
         ],
     },
 }

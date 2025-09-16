@@ -31,11 +31,24 @@ class VRChatMessenger:
 
         # Initialize ShockOSC controller with callback
         self.shock_controller = ShockOSCController(ip, port, self._on_shock_triggered)
-        self.shock_controller.update_config(self.app_config.get("shockosc", {}))
+        shock_config = self.app_config.get("shockosc", {})
+        self.shock_controller.update_config(shock_config)
+
+        # Set internet shock callback
+        self.shock_controller.set_internet_shock_callback(self._on_internet_shock)
+
+        # Start SignalR connection if token is available
+        if shock_config.get("openshock_token"):
+            print("OpenShock token found, starting SignalR connection for real-time events...")
+            self.shock_controller.start_signalr_connection()
         
         # Shock display state
         self.show_shock_info = False
         self.shock_hide_timer = None
+
+        # Internet shock display state
+        self.show_internet_shock_info = False
+        self.internet_shock_hide_timer = None
         
         # Contact hold tracking
         self.contact_start_times = {}  # Track when contact started for each group
@@ -108,7 +121,8 @@ class VRChatMessenger:
         display_order = [
             "time",
             "boops",
-            "shock_info",  # Shock info overrides music when active
+            "shock_info",  # Local shock info has highest priority
+            "internet_shock_info",  # Internet shock info second priority
             "joinmymusic_info",
             "joinmymusic_artist",
             "joinmymusic_song",
@@ -341,6 +355,56 @@ class VRChatMessenger:
         self.client.send_message("/chatbox/input", ["", True, False])
         print("Shock info hidden - chatbox cleared")
 
+    def _on_internet_shock(self, user_name, real_name, shocker_name, type_name, intensity, duration, is_guest=False, share_link_id=None):
+        """Callback when an internet shock is received"""
+        shock_config = self.app_config.get("shockosc", {})
+        if not shock_config.get("show_internet_shocks", True):
+            print(f"Internet {type_name} from {user_name} ignored - display disabled")
+            return
+
+        print(f"Internet {type_name} callback: {intensity}% from {user_name} ({real_name})")
+
+        # Update internet shock data in cache
+        from placeholders import data_cache
+        data_cache.update_internet_shock_data(
+            user_name=user_name,
+            real_name=real_name,
+            shocker_name=shocker_name,
+            type_name=type_name,
+            intensity=intensity,
+            duration=duration,
+            is_guest=is_guest,
+            share_link_id=share_link_id
+        )
+
+        # Update internet shock info message
+        if "internet_shock_info" in self.active_messages:
+            self.active_messages["internet_shock_info"]["message"] = self._format_message(
+                message_config["internet_shock_info"]["messages"][0]
+            )
+
+        # Show internet shock info
+        self.show_internet_shock_info = True
+
+        # Cancel any existing hide timer
+        if self.internet_shock_hide_timer:
+            self.internet_shock_hide_timer.cancel()
+
+        # Set timer to hide internet shock info after 10 seconds
+        self.internet_shock_hide_timer = threading.Timer(10.0, self._hide_internet_shock_info)
+        self.internet_shock_hide_timer.start()
+
+        # Request display update
+        self.request_display_update()
+
+    def _hide_internet_shock_info(self):
+        """Hide internet shock info display"""
+        self.show_internet_shock_info = False
+        self.internet_shock_hide_timer = None
+        # Don't clear chatbox automatically - let regular display logic handle it
+        self.request_display_update()
+        print("Internet shock info hidden")
+
     def clear_all_hold_timers(self):
         """Clear all active hold timers"""
         for group, timer in list(self.hold_timers.items()):
@@ -354,6 +418,21 @@ class VRChatMessenger:
         self.app_config["shockosc"] = shock_config
         save_app_config(self.app_config)
         self.shock_controller.update_config(shock_config)
+
+    def cleanup(self):
+        """Clean up resources when shutting down"""
+        print("Cleaning up VRChatMessenger...")
+
+        # Cancel internet shock timer
+        if hasattr(self, 'internet_shock_hide_timer') and self.internet_shock_hide_timer:
+            self.internet_shock_hide_timer.cancel()
+
+        if hasattr(self, 'shock_controller'):
+            self.shock_controller.cleanup()
+
+        # Stop OSC server
+        if hasattr(self, 'server'):
+            self.server.shutdown()
 
     def request_display_update(self, force_for_shock=False, from_song_change=False):
         """Request a display update, respecting rate limits"""
@@ -372,21 +451,40 @@ class VRChatMessenger:
         except KeyError as e:
             return f"Error: Missing placeholder {e}"
 
+
     def _should_show_message(self, category, message):
         # For boops, only show if there's been a recent boop
         if category == "boops":
             return self.show_boops
 
-        # For shock info - show when active and enabled, overrides music
+        # For shock info - show when active and enabled, highest priority
         if category == "shock_info":
             shock_config = self.app_config.get("shockosc", {})
             if not shock_config.get("show_shock_info", True):
                 return False
             return self.show_shock_info
 
+        # For internet shock info - show when active and enabled, but hide if local shock is active
+        if category == "internet_shock_info":
+            # Hide internet shock info if local shock info is showing
+            if self.show_shock_info:
+                shock_config = self.app_config.get("shockosc", {})
+                if shock_config.get("show_shock_info", True):
+                    return False
+
+            shock_config = self.app_config.get("shockosc", {})
+            if not shock_config.get("show_internet_shocks", True):
+                return False
+            return self.show_internet_shock_info
+
         # For JoinMyMusic related categories
         if category.startswith("joinmymusic"):
-            # Hide music if shock info is showing (shock overrides music)
+            # Hide music if any shock info is showing (shock overrides music)
+            if self.show_internet_shock_info:
+                shock_config = self.app_config.get("shockosc", {})
+                if shock_config.get("show_internet_shocks", True):
+                    return False
+
             if self.show_shock_info:
                 shock_config = self.app_config.get("shockosc", {})
                 if shock_config.get("show_shock_info", True):
@@ -443,6 +541,8 @@ def main():
             time.sleep(1)
     except KeyboardInterrupt:
         print("\nExiting...")
+    finally:
+        vrc.cleanup()
 
 
 if __name__ == "__main__":
