@@ -362,6 +362,12 @@ class VRChatMessenger:
             print(f"Internet {type_name} from {user_name} ignored - display disabled")
             return
 
+        # Check if user is in ignored list
+        ignored_users = shock_config.get("ignored_shock_users", [])
+        if user_name in ignored_users:
+            print(f"Internet {type_name} from {user_name} ignored - user in ignored list")
+            return
+
         print(f"Internet {type_name} callback: {intensity}% from {user_name} ({real_name})")
 
         # Update internet shock data in cache

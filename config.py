@@ -63,7 +63,8 @@ def load_app_config():
             "openshock_token": "",  # OpenShock API token
             "shockers": {},  # Shocker ID to group mapping {"shocker_id": "group_name"}
             "openshock_url": "https://api.openshock.app",  # OpenShock API base URL
-            "show_internet_shocks": True  # Show shocks from internet users in chatbox
+            "show_internet_shocks": True,  # Show shocks from internet users in chatbox
+            "ignored_shock_users": ["VRCChatbox"]  # List of user names to ignore for shock display (case-sensitive)
         }
     }
 
@@ -75,6 +76,12 @@ def load_app_config():
                 # Merge with defaults to ensure all required fields exist
                 merged_config = default_config.copy()
                 merged_config.update(user_config)
+
+                # Deep merge the shockosc config to ensure new fields are added
+                if "shockosc" in user_config and "shockosc" in default_config:
+                    default_shockosc = default_config["shockosc"].copy()
+                    default_shockosc.update(user_config["shockosc"])
+                    merged_config["shockosc"] = default_shockosc
 
                 # Ensure messages section exists and merge with defaults
                 if "messages" not in merged_config:
