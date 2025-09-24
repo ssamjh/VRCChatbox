@@ -44,11 +44,14 @@ class ShockOSCController:
         
     def update_config(self, new_config):
         """Update ShockOSC configuration"""
+        old_token = self.config.get("openshock_token", "").strip()
+        new_token = new_config.get("openshock_token", "").strip()
+
         self.config.update(new_config)
         print(f"ShockOSC config updated: {self.config}")
 
-        # Start or restart SignalR connection if token is available
-        if new_config.get("openshock_token"):
+        # Start or restart SignalR connection only if token changed
+        if new_token and new_token != old_token:
             self.start_signalr_connection()
 
     def set_internet_shock_callback(self, callback):
@@ -450,19 +453,32 @@ class ShockOSCController:
 
     def stop_signalr_connection(self):
         """Stop SignalR connection"""
-        if self.websocket and self.signalr_connected:
+        if self.signalr_connected or self.websocket or self.signalr_thread:
             print("Stopping OpenShock SignalR connection...")
+
+            # Mark as disconnected first to prevent new operations
+            self.signalr_connected = False
+
             try:
-                if self.signalr_loop and not self.signalr_loop.is_closed():
+                # Close the websocket if it exists
+                if self.websocket and self.signalr_loop and not self.signalr_loop.is_closed():
                     asyncio.run_coroutine_threadsafe(
                         self.websocket.close(), self.signalr_loop
                     )
+
+                # Wait for thread to finish (with timeout to prevent hanging)
+                if self.signalr_thread and self.signalr_thread.is_alive():
+                    self.signalr_thread.join(timeout=5.0)
+                    if self.signalr_thread.is_alive():
+                        print("Warning: SignalR thread did not stop within timeout")
+
             except Exception as e:
                 print(f"Error stopping SignalR connection: {e}")
 
-        self.signalr_connected = False
+        # Clear all references
         self.websocket = None
         self.signalr_loop = None
+        self.signalr_thread = None
 
     def _run_signalr_connection(self):
         """Run SignalR connection in a separate thread"""
