@@ -5,6 +5,7 @@ from config import message_config, load_app_config, save_app_config, reload_mess
 from placeholders import get_placeholder_value, data_cache
 from boop_counter import BoopCounter
 from shockosc import ShockOSCController
+from slide import SlideController
 
 
 class VRChatMessenger:
@@ -41,7 +42,7 @@ class VRChatMessenger:
         if shock_config.get("openshock_token"):
             print("OpenShock token found, starting SignalR connection for real-time events...")
             self.shock_controller.start_signalr_connection()
-        
+
         # Shock display state
         self.show_shock_info = False
         self.shock_hide_timer = None
@@ -68,6 +69,14 @@ class VRChatMessenger:
         # Add ShockOSC parameter listeners
         self.dispatcher.map("/avatar/parameters/ShockOsc/leftleg", self._handle_shock_trigger)
         self.dispatcher.map("/avatar/parameters/ShockOsc/rightleg", self._handle_shock_trigger)
+
+        # Initialize Slide controller (after dispatcher is created)
+        self.slide_controller = SlideController(
+            dispatcher=self.dispatcher,
+            shock_controller=self.shock_controller
+        )
+        slide_config = self.app_config.get("slide", {})
+        self.slide_controller.update_config(slide_config)
 
         # Setup OSC server for listening
         self.server = osc_server.ThreadingOSCUDPServer(
@@ -425,6 +434,13 @@ class VRChatMessenger:
         save_app_config(self.app_config)
         self.shock_controller.update_config(shock_config)
 
+    def update_slide_config(self, slide_config):
+        """Update Slide configuration"""
+        self.app_config["slide"] = slide_config
+        save_app_config(self.app_config)
+        if hasattr(self, 'slide_controller'):
+            self.slide_controller.update_config(slide_config)
+
     def update_app_config(self, new_config):
         """Update full app configuration including messages"""
         self.app_config.update(new_config)
@@ -441,6 +457,10 @@ class VRChatMessenger:
 
         if hasattr(self, 'shock_controller'):
             self.shock_controller.cleanup()
+
+        # Stop slide polling
+        if hasattr(self, 'slide_controller'):
+            self.slide_controller.stop_polling()
 
         # Stop OSC server
         if hasattr(self, 'server'):

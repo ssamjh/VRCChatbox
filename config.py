@@ -65,6 +65,11 @@ def load_app_config():
             "openshock_url": "https://api.openshock.app",  # OpenShock API base URL
             "show_internet_shocks": True,  # Show shocks from internet users in chatbox
             "ignored_shock_users": ["VRCChatbox"]  # List of user names to ignore for shock display (case-sensitive)
+        },
+        "slide": {
+            "enabled": False,  # Master toggle for Slide feature
+            "poll_interval": 1.0,  # Poll rate in seconds (0.1-10.0)
+            "variables": []  # List of OSC variables to monitor
         }
     }
 
@@ -82,6 +87,12 @@ def load_app_config():
                     default_shockosc = default_config["shockosc"].copy()
                     default_shockosc.update(user_config["shockosc"])
                     merged_config["shockosc"] = default_shockosc
+
+                # Deep merge the slide config to ensure new fields are added
+                if "slide" in user_config and "slide" in default_config:
+                    default_slide = default_config["slide"].copy()
+                    default_slide.update(user_config["slide"])
+                    merged_config["slide"] = default_slide
 
                 # Ensure messages section exists and merge with defaults
                 if "messages" not in merged_config:

@@ -54,7 +54,12 @@ class VRCChatboxGUI:
         shock_frame = ttk.Frame(notebook, padding="8")
         notebook.add(shock_frame, text="ShockOSC")
         self.setup_shockosc_ui(shock_frame)
-        
+
+        # Slide tab
+        slide_frame = ttk.Frame(notebook, padding="8")
+        notebook.add(slide_frame, text="Slide")
+        self.setup_slide_ui(slide_frame)
+
         # Status label (bottom of main window)
         self.status_label = ttk.Label(self.root, text="", foreground="green")
         self.status_label.pack(pady=5)
@@ -697,7 +702,401 @@ class VRCChatboxGUI:
         # Save if we made changes
         if needs_save:
             save_app_config(self.config)
-        
+
+    def setup_slide_ui(self, parent):
+        """Setup Slide settings UI"""
+        slide_config = self.config.get("slide", {})
+
+        # Master enable toggle
+        self.slide_enabled_var = tk.BooleanVar(value=slide_config.get("enabled", False))
+        enabled_checkbox = ttk.Checkbutton(
+            parent,
+            text="Enable Slide Feature",
+            variable=self.slide_enabled_var,
+            command=self.on_slide_settings_change
+        )
+        enabled_checkbox.grid(row=0, column=0, columnspan=3, sticky=tk.W, pady=(0, 10))
+
+        # Poll interval
+        ttk.Label(parent, text="Poll Interval (seconds):").grid(row=1, column=0, sticky=tk.W, pady=5)
+        self.slide_poll_interval_var = tk.DoubleVar(value=slide_config.get("poll_interval", 1.0))
+        poll_spinbox = ttk.Spinbox(
+            parent,
+            from_=0.1,
+            to=10.0,
+            increment=0.1,
+            width=10,
+            textvariable=self.slide_poll_interval_var,
+            command=self.on_slide_settings_change
+        )
+        poll_spinbox.grid(row=1, column=1, sticky=tk.W, padx=(10, 0), pady=5)
+        poll_spinbox.bind('<KeyRelease>', lambda e: self.on_slide_settings_change())
+
+        # Variables label
+        ttk.Label(parent, text="OSC Variables:").grid(row=2, column=0, columnspan=3, sticky=tk.W, pady=(15, 5))
+
+        # Treeview for variables
+        tree_frame = ttk.Frame(parent)
+        tree_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
+
+        self.slide_vars_tree = ttk.Treeview(
+            tree_frame,
+            columns=('Name', 'OSC Path', 'Threshold', 'Shockers', 'Enabled'),
+            show='headings',
+            height=8
+        )
+        self.slide_vars_tree.heading('Name', text='Name')
+        self.slide_vars_tree.heading('OSC Path', text='OSC Path')
+        self.slide_vars_tree.heading('Threshold', text='Threshold')
+        self.slide_vars_tree.heading('Shockers', text='Shockers')
+        self.slide_vars_tree.heading('Enabled', text='Enabled')
+        self.slide_vars_tree.column('Name', width=100)
+        self.slide_vars_tree.column('OSC Path', width=180)
+        self.slide_vars_tree.column('Threshold', width=70)
+        self.slide_vars_tree.column('Shockers', width=80)
+        self.slide_vars_tree.column('Enabled', width=50)
+        self.slide_vars_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Scrollbar
+        tree_scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.slide_vars_tree.yview)
+        tree_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.slide_vars_tree.configure(yscrollcommand=tree_scrollbar.set)
+
+        # Buttons
+        button_frame = ttk.Frame(parent)
+        button_frame.grid(row=4, column=0, columnspan=3, pady=10)
+
+        ttk.Button(button_frame, text="Add Variable", command=self.add_slide_variable).grid(row=0, column=0, padx=5)
+        ttk.Button(button_frame, text="Edit Selected", command=self.edit_slide_variable).grid(row=0, column=1, padx=5)
+        ttk.Button(button_frame, text="Remove Selected", command=self.remove_slide_variable).grid(row=0, column=2, padx=5)
+
+        # Load existing variables
+        self.refresh_slide_variables_display()
+
+    def add_slide_variable(self):
+        """Show dialog to add a new slide variable"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Add Slide Variable")
+        dialog.geometry("450x220")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # Name
+        ttk.Label(dialog, text="Name:").grid(row=0, column=0, sticky=tk.W, padx=10, pady=8)
+        name_var = tk.StringVar()
+        ttk.Entry(dialog, textvariable=name_var, width=35).grid(row=0, column=1, padx=10, pady=8)
+
+        # OSC Path
+        ttk.Label(dialog, text="OSC Path:").grid(row=1, column=0, sticky=tk.W, padx=10, pady=8)
+        path_var = tk.StringVar(value="/avatar/parameters/")
+        ttk.Entry(dialog, textvariable=path_var, width=35).grid(row=1, column=1, padx=10, pady=8)
+
+        # Threshold
+        ttk.Label(dialog, text="Threshold (0.0-1.0):").grid(row=2, column=0, sticky=tk.W, padx=10, pady=8)
+        threshold_var = tk.DoubleVar(value=0.0)
+        ttk.Spinbox(
+            dialog,
+            from_=0.0,
+            to=1.0,
+            increment=0.05,
+            textvariable=threshold_var,
+            width=10
+        ).grid(row=2, column=1, sticky=tk.W, padx=10, pady=8)
+
+        # Shockers selection
+        ttk.Label(dialog, text="Shockers:").grid(row=3, column=0, sticky=tk.W, padx=10, pady=8)
+        selected_shockers = []  # Store selected shocker IDs
+
+        def open_shocker_selection():
+            """Open dialog to select shockers"""
+            shocker_dialog = tk.Toplevel(dialog)
+            shocker_dialog.title("Select Shockers")
+            shocker_dialog.geometry("400x300")
+            shocker_dialog.transient(dialog)
+            shocker_dialog.grab_set()
+
+            ttk.Label(shocker_dialog, text="Select shockers for this variable:").pack(pady=10)
+
+            # Get available shockers from config
+            shockers_config = self.config.get("shockosc", {}).get("shockers", {})
+
+            if not shockers_config:
+                ttk.Label(shocker_dialog, text="No shockers configured in ShockOSC tab").pack(pady=20)
+                ttk.Button(shocker_dialog, text="Close", command=shocker_dialog.destroy).pack(pady=10)
+                return
+
+            # Create checkbuttons for each shocker
+            shocker_vars = {}
+            for shocker_id, shocker_info in shockers_config.items():
+                if isinstance(shocker_info, dict):
+                    shocker_name = shocker_info.get("name", shocker_id[:8])
+                    device_name = shocker_info.get("device_name", "")
+                    label = f"{shocker_name} ({device_name})" if device_name else shocker_name
+                else:
+                    label = shocker_id[:8]
+
+                var = tk.BooleanVar(value=shocker_id in selected_shockers)
+                shocker_vars[shocker_id] = var
+                ttk.Checkbutton(shocker_dialog, text=label, variable=var).pack(anchor=tk.W, padx=20)
+
+            def save_selection():
+                selected_shockers.clear()
+                for shocker_id, var in shocker_vars.items():
+                    if var.get():
+                        selected_shockers.append(shocker_id)
+                update_shocker_label()
+                shocker_dialog.destroy()
+
+            ttk.Button(shocker_dialog, text="Save", command=save_selection).pack(pady=10)
+
+        def update_shocker_label():
+            count = len(selected_shockers)
+            shocker_button.config(text=f"Select Shockers ({count} selected)" if count > 0 else "Select Shockers (All)")
+
+        shocker_button = ttk.Button(dialog, text="Select Shockers (All)", command=open_shocker_selection)
+        shocker_button.grid(row=3, column=1, sticky=tk.W, padx=10, pady=8)
+
+        # Enabled
+        enabled_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(dialog, text="Enabled", variable=enabled_var).grid(row=4, column=0, columnspan=2, pady=8)
+
+        # Buttons
+        def save_variable():
+            # Validation
+            if not name_var.get().strip():
+                messagebox.showerror("Error", "Name cannot be empty")
+                return
+            if not path_var.get().strip():
+                messagebox.showerror("Error", "OSC Path cannot be empty")
+                return
+
+            # Add to config
+            if "slide" not in self.config:
+                self.config["slide"] = {"enabled": False, "poll_interval": 1.0, "variables": []}
+
+            self.config["slide"]["variables"].append({
+                "name": name_var.get().strip(),
+                "osc_path": path_var.get().strip(),
+                "threshold": round(threshold_var.get(), 2),
+                "enabled": enabled_var.get(),
+                "shockers": selected_shockers
+            })
+
+            save_app_config(self.config)
+            self.refresh_slide_variables_display()
+            self.update_slide_controller()
+            dialog.destroy()
+
+        button_frame = ttk.Frame(dialog)
+        button_frame.grid(row=5, column=0, columnspan=2, pady=10)
+        ttk.Button(button_frame, text="Save", command=save_variable).grid(row=0, column=0, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).grid(row=0, column=1, padx=5)
+
+    def edit_slide_variable(self):
+        """Show dialog to edit selected slide variable"""
+        selected = self.slide_vars_tree.selection()
+        if not selected:
+            messagebox.showwarning("No Selection", "Please select a variable to edit")
+            return
+
+        # Get the selected index
+        item = selected[0]
+        item_index = self.slide_vars_tree.index(item)
+
+        # Get current variable data
+        variables = self.config.get("slide", {}).get("variables", [])
+        if item_index >= len(variables):
+            return
+
+        current_var = variables[item_index]
+
+        # Create dialog
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Edit Slide Variable")
+        dialog.geometry("450x220")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # Name
+        ttk.Label(dialog, text="Name:").grid(row=0, column=0, sticky=tk.W, padx=10, pady=8)
+        name_var = tk.StringVar(value=current_var.get("name", ""))
+        ttk.Entry(dialog, textvariable=name_var, width=35).grid(row=0, column=1, padx=10, pady=8)
+
+        # OSC Path
+        ttk.Label(dialog, text="OSC Path:").grid(row=1, column=0, sticky=tk.W, padx=10, pady=8)
+        path_var = tk.StringVar(value=current_var.get("osc_path", ""))
+        ttk.Entry(dialog, textvariable=path_var, width=35).grid(row=1, column=1, padx=10, pady=8)
+
+        # Threshold
+        ttk.Label(dialog, text="Threshold (0.0-1.0):").grid(row=2, column=0, sticky=tk.W, padx=10, pady=8)
+        threshold_var = tk.DoubleVar(value=current_var.get("threshold", 0.0))
+        ttk.Spinbox(
+            dialog,
+            from_=0.0,
+            to=1.0,
+            increment=0.05,
+            textvariable=threshold_var,
+            width=10
+        ).grid(row=2, column=1, sticky=tk.W, padx=10, pady=8)
+
+        # Shockers selection
+        ttk.Label(dialog, text="Shockers:").grid(row=3, column=0, sticky=tk.W, padx=10, pady=8)
+        selected_shockers = list(current_var.get("shockers", []))  # Pre-populate from current variable
+
+        def open_shocker_selection():
+            """Open dialog to select shockers"""
+            shocker_dialog = tk.Toplevel(dialog)
+            shocker_dialog.title("Select Shockers")
+            shocker_dialog.geometry("400x300")
+            shocker_dialog.transient(dialog)
+            shocker_dialog.grab_set()
+
+            ttk.Label(shocker_dialog, text="Select shockers for this variable:").pack(pady=10)
+
+            # Get available shockers from config
+            shockers_config = self.config.get("shockosc", {}).get("shockers", {})
+
+            if not shockers_config:
+                ttk.Label(shocker_dialog, text="No shockers configured in ShockOSC tab").pack(pady=20)
+                ttk.Button(shocker_dialog, text="Close", command=shocker_dialog.destroy).pack(pady=10)
+                return
+
+            # Create checkbuttons for each shocker
+            shocker_vars = {}
+            for shocker_id, shocker_info in shockers_config.items():
+                if isinstance(shocker_info, dict):
+                    shocker_name = shocker_info.get("name", shocker_id[:8])
+                    device_name = shocker_info.get("device_name", "")
+                    label = f"{shocker_name} ({device_name})" if device_name else shocker_name
+                else:
+                    label = shocker_id[:8]
+
+                var = tk.BooleanVar(value=shocker_id in selected_shockers)
+                shocker_vars[shocker_id] = var
+                ttk.Checkbutton(shocker_dialog, text=label, variable=var).pack(anchor=tk.W, padx=20)
+
+            def save_selection():
+                selected_shockers.clear()
+                for shocker_id, var in shocker_vars.items():
+                    if var.get():
+                        selected_shockers.append(shocker_id)
+                update_shocker_label()
+                shocker_dialog.destroy()
+
+            ttk.Button(shocker_dialog, text="Save", command=save_selection).pack(pady=10)
+
+        def update_shocker_label():
+            count = len(selected_shockers)
+            shocker_button.config(text=f"Select Shockers ({count} selected)" if count > 0 else "Select Shockers (All)")
+
+        shocker_button = ttk.Button(dialog, text="Select Shockers (All)", command=open_shocker_selection)
+        shocker_button.grid(row=3, column=1, sticky=tk.W, padx=10, pady=8)
+        # Update button label with current count
+        update_shocker_label()
+
+        # Enabled
+        enabled_var = tk.BooleanVar(value=current_var.get("enabled", True))
+        ttk.Checkbutton(dialog, text="Enabled", variable=enabled_var).grid(row=4, column=0, columnspan=2, pady=8)
+
+        # Buttons
+        def save_variable():
+            # Validation
+            if not name_var.get().strip():
+                messagebox.showerror("Error", "Name cannot be empty")
+                return
+            if not path_var.get().strip():
+                messagebox.showerror("Error", "OSC Path cannot be empty")
+                return
+
+            # Update config
+            self.config["slide"]["variables"][item_index] = {
+                "name": name_var.get().strip(),
+                "osc_path": path_var.get().strip(),
+                "threshold": round(threshold_var.get(), 2),
+                "enabled": enabled_var.get(),
+                "shockers": selected_shockers
+            }
+
+            save_app_config(self.config)
+            self.refresh_slide_variables_display()
+            self.update_slide_controller()
+            dialog.destroy()
+
+        button_frame = ttk.Frame(dialog)
+        button_frame.grid(row=5, column=0, columnspan=2, pady=10)
+        ttk.Button(button_frame, text="Save", command=save_variable).grid(row=0, column=0, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).grid(row=0, column=1, padx=5)
+
+    def remove_slide_variable(self):
+        """Remove selected slide variable"""
+        selected = self.slide_vars_tree.selection()
+        if not selected:
+            messagebox.showwarning("No Selection", "Please select a variable to remove")
+            return
+
+        # Confirm deletion
+        if not messagebox.askyesno("Confirm Delete", "Are you sure you want to delete this variable?"):
+            return
+
+        # Get the selected index
+        item = selected[0]
+        item_index = self.slide_vars_tree.index(item)
+
+        # Remove from config
+        if "slide" in self.config and "variables" in self.config["slide"]:
+            variables = self.config["slide"]["variables"]
+            if item_index < len(variables):
+                del variables[item_index]
+                save_app_config(self.config)
+                self.refresh_slide_variables_display()
+                self.update_slide_controller()
+
+    def refresh_slide_variables_display(self):
+        """Refresh the slide variables treeview"""
+        # Clear existing items
+        for item in self.slide_vars_tree.get_children():
+            self.slide_vars_tree.delete(item)
+
+        # Load variables from config
+        variables = self.config.get("slide", {}).get("variables", [])
+
+        # Insert each variable as a row
+        for var in variables:
+            name = var.get("name", "")
+            osc_path = var.get("osc_path", "")
+            threshold = var.get("threshold", 0.0)
+            shockers = var.get("shockers", [])
+            enabled = "Yes" if var.get("enabled", True) else "No"
+
+            # Format shockers count
+            shocker_count = f"{len(shockers)}" if shockers else "All"
+
+            self.slide_vars_tree.insert('', tk.END, values=(name, osc_path, f"{threshold:.2f}", shocker_count, enabled))
+
+    def on_slide_settings_change(self):
+        """Handle Slide settings change"""
+        if "slide" not in self.config:
+            self.config["slide"] = {}
+
+        self.config["slide"]["enabled"] = self.slide_enabled_var.get()
+        self.config["slide"]["poll_interval"] = round(self.slide_poll_interval_var.get(), 1)
+
+        save_app_config(self.config)
+
+        # Update messenger's slide controller if available
+        self.update_slide_controller()
+
+        # Show status
+        if hasattr(self, 'status_label'):
+            status = "enabled" if self.config["slide"]["enabled"] else "disabled"
+            self.status_label.config(text=f"Slide feature {status}")
+            self.root.after(2000, lambda: self.status_label.config(text=""))
+
+    def update_slide_controller(self):
+        """Update the slide controller with current config"""
+        if self.messenger and hasattr(self.messenger, 'slide_controller'):
+            self.messenger.update_slide_config(self.config.get("slide", {}))
+
     def run(self):
         """Run the GUI"""
         self.root.mainloop()
