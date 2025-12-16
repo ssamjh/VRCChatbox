@@ -732,16 +732,62 @@ class VRCChatboxGUI:
         poll_spinbox.grid(row=1, column=1, sticky=tk.W, padx=(10, 0), pady=5)
         poll_spinbox.bind('<KeyRelease>', lambda e: self.on_slide_settings_change())
 
+        # Intensity range settings
+        intensity_frame = ttk.LabelFrame(parent, text="Value-Based Intensity Range", padding="5")
+        intensity_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
+
+        ttk.Label(intensity_frame, text="Min Intensity (%):").grid(row=0, column=0, sticky=tk.W, padx=5, pady=3)
+        self.slide_intensity_min_var = tk.IntVar(value=slide_config.get("intensity_min", 30))
+        min_spinbox = ttk.Spinbox(
+            intensity_frame,
+            from_=0,
+            to=100,
+            increment=5,
+            textvariable=self.slide_intensity_min_var,
+            width=8,
+            command=self.on_slide_settings_change
+        )
+        min_spinbox.grid(row=0, column=1, sticky=tk.W, padx=5, pady=3)
+        min_spinbox.bind('<KeyRelease>', lambda e: self.on_slide_settings_change())
+
+        ttk.Label(intensity_frame, text="Max Intensity (%):").grid(row=0, column=2, sticky=tk.W, padx=5, pady=3)
+        self.slide_intensity_max_var = tk.IntVar(value=slide_config.get("intensity_max", 70))
+        max_spinbox = ttk.Spinbox(
+            intensity_frame,
+            from_=0,
+            to=100,
+            increment=5,
+            textvariable=self.slide_intensity_max_var,
+            width=8,
+            command=self.on_slide_settings_change
+        )
+        max_spinbox.grid(row=0, column=3, sticky=tk.W, padx=5, pady=3)
+        max_spinbox.bind('<KeyRelease>', lambda e: self.on_slide_settings_change())
+
+        ttk.Label(intensity_frame, text="Probability Cooldown (sec):").grid(row=1, column=0, sticky=tk.W, padx=5, pady=3)
+        self.slide_probability_cooldown_var = tk.DoubleVar(value=slide_config.get("probability_cooldown", 10.0))
+        cooldown_spinbox = ttk.Spinbox(
+            intensity_frame,
+            from_=0.0,
+            to=60.0,
+            increment=1.0,
+            textvariable=self.slide_probability_cooldown_var,
+            width=8,
+            command=self.on_slide_settings_change
+        )
+        cooldown_spinbox.grid(row=1, column=1, sticky=tk.W, padx=5, pady=3)
+        cooldown_spinbox.bind('<KeyRelease>', lambda e: self.on_slide_settings_change())
+
         # Variables label
-        ttk.Label(parent, text="OSC Variables:").grid(row=2, column=0, columnspan=3, sticky=tk.W, pady=(15, 5))
+        ttk.Label(parent, text="OSC Variables:").grid(row=3, column=0, columnspan=3, sticky=tk.W, pady=(15, 5))
 
         # Treeview for variables
         tree_frame = ttk.Frame(parent)
-        tree_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
+        tree_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
 
         self.slide_vars_tree = ttk.Treeview(
             tree_frame,
-            columns=('Name', 'OSC Path', 'Threshold', 'Shockers', 'Enabled'),
+            columns=('Name', 'OSC Path', 'Threshold', 'Shockers', 'Hold', 'Enabled'),
             show='headings',
             height=8
         )
@@ -749,11 +795,13 @@ class VRCChatboxGUI:
         self.slide_vars_tree.heading('OSC Path', text='OSC Path')
         self.slide_vars_tree.heading('Threshold', text='Threshold')
         self.slide_vars_tree.heading('Shockers', text='Shockers')
+        self.slide_vars_tree.heading('Hold', text='Hold')
         self.slide_vars_tree.heading('Enabled', text='Enabled')
-        self.slide_vars_tree.column('Name', width=100)
-        self.slide_vars_tree.column('OSC Path', width=180)
-        self.slide_vars_tree.column('Threshold', width=70)
-        self.slide_vars_tree.column('Shockers', width=80)
+        self.slide_vars_tree.column('Name', width=90)
+        self.slide_vars_tree.column('OSC Path', width=160)
+        self.slide_vars_tree.column('Threshold', width=60)
+        self.slide_vars_tree.column('Shockers', width=70)
+        self.slide_vars_tree.column('Hold', width=50)
         self.slide_vars_tree.column('Enabled', width=50)
         self.slide_vars_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
@@ -764,7 +812,7 @@ class VRCChatboxGUI:
 
         # Buttons
         button_frame = ttk.Frame(parent)
-        button_frame.grid(row=4, column=0, columnspan=3, pady=10)
+        button_frame.grid(row=5, column=0, columnspan=3, pady=10)
 
         ttk.Button(button_frame, text="Add Variable", command=self.add_slide_variable).grid(row=0, column=0, padx=5)
         ttk.Button(button_frame, text="Edit Selected", command=self.edit_slide_variable).grid(row=0, column=1, padx=5)
@@ -777,7 +825,7 @@ class VRCChatboxGUI:
         """Show dialog to add a new slide variable"""
         dialog = tk.Toplevel(self.root)
         dialog.title("Add Slide Variable")
-        dialog.geometry("450x220")
+        dialog.geometry("450x250")
         dialog.transient(self.root)
         dialog.grab_set()
 
@@ -856,9 +904,37 @@ class VRCChatboxGUI:
         shocker_button = ttk.Button(dialog, text="Select Shockers (All)", command=open_shocker_selection)
         shocker_button.grid(row=3, column=1, sticky=tk.W, padx=10, pady=8)
 
+        # Hold mode toggle
+        hold_mode_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(dialog, text="Enable Hold Mode", variable=hold_mode_var).grid(row=4, column=0, sticky=tk.W, padx=10, pady=8)
+
+        # Hold time
+        ttk.Label(dialog, text="Hold Time (sec):").grid(row=4, column=1, sticky=tk.W, padx=(80, 0), pady=8)
+        hold_time_var = tk.DoubleVar(value=3.0)
+        ttk.Spinbox(
+            dialog,
+            from_=1.0,
+            to=10.0,
+            increment=0.5,
+            textvariable=hold_time_var,
+            width=8
+        ).grid(row=4, column=1, sticky=tk.E, padx=10, pady=8)
+
+        # Hold threshold
+        ttk.Label(dialog, text="Hold Threshold:").grid(row=5, column=0, sticky=tk.W, padx=10, pady=8)
+        hold_threshold_var = tk.DoubleVar(value=0.9)
+        ttk.Spinbox(
+            dialog,
+            from_=0.0,
+            to=1.0,
+            increment=0.05,
+            textvariable=hold_threshold_var,
+            width=8
+        ).grid(row=5, column=1, sticky=tk.W, padx=10, pady=8)
+
         # Enabled
         enabled_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(dialog, text="Enabled", variable=enabled_var).grid(row=4, column=0, columnspan=2, pady=8)
+        ttk.Checkbutton(dialog, text="Enabled", variable=enabled_var).grid(row=6, column=0, columnspan=2, pady=8)
 
         # Buttons
         def save_variable():
@@ -879,7 +955,10 @@ class VRCChatboxGUI:
                 "osc_path": path_var.get().strip(),
                 "threshold": round(threshold_var.get(), 2),
                 "enabled": enabled_var.get(),
-                "shockers": selected_shockers
+                "shockers": selected_shockers,
+                "hold_mode": hold_mode_var.get(),
+                "hold_time": round(hold_time_var.get(), 1),
+                "hold_threshold": round(hold_threshold_var.get(), 2)
             })
 
             save_app_config(self.config)
@@ -888,7 +967,7 @@ class VRCChatboxGUI:
             dialog.destroy()
 
         button_frame = ttk.Frame(dialog)
-        button_frame.grid(row=5, column=0, columnspan=2, pady=10)
+        button_frame.grid(row=7, column=0, columnspan=2, pady=10)
         ttk.Button(button_frame, text="Save", command=save_variable).grid(row=0, column=0, padx=5)
         ttk.Button(button_frame, text="Cancel", command=dialog.destroy).grid(row=0, column=1, padx=5)
 
@@ -913,7 +992,7 @@ class VRCChatboxGUI:
         # Create dialog
         dialog = tk.Toplevel(self.root)
         dialog.title("Edit Slide Variable")
-        dialog.geometry("450x220")
+        dialog.geometry("450x310")
         dialog.transient(self.root)
         dialog.grab_set()
 
@@ -994,9 +1073,37 @@ class VRCChatboxGUI:
         # Update button label with current count
         update_shocker_label()
 
+        # Hold mode toggle
+        hold_mode_var = tk.BooleanVar(value=current_var.get("hold_mode", False))
+        ttk.Checkbutton(dialog, text="Enable Hold Mode", variable=hold_mode_var).grid(row=4, column=0, sticky=tk.W, padx=10, pady=8)
+
+        # Hold time
+        ttk.Label(dialog, text="Hold Time (sec):").grid(row=4, column=1, sticky=tk.W, padx=(80, 0), pady=8)
+        hold_time_var = tk.DoubleVar(value=current_var.get("hold_time", 3.0))
+        ttk.Spinbox(
+            dialog,
+            from_=1.0,
+            to=10.0,
+            increment=0.5,
+            textvariable=hold_time_var,
+            width=8
+        ).grid(row=4, column=1, sticky=tk.E, padx=10, pady=8)
+
+        # Hold threshold
+        ttk.Label(dialog, text="Hold Threshold:").grid(row=5, column=0, sticky=tk.W, padx=10, pady=8)
+        hold_threshold_var = tk.DoubleVar(value=current_var.get("hold_threshold", 0.9))
+        ttk.Spinbox(
+            dialog,
+            from_=0.0,
+            to=1.0,
+            increment=0.05,
+            textvariable=hold_threshold_var,
+            width=8
+        ).grid(row=5, column=1, sticky=tk.W, padx=10, pady=8)
+
         # Enabled
         enabled_var = tk.BooleanVar(value=current_var.get("enabled", True))
-        ttk.Checkbutton(dialog, text="Enabled", variable=enabled_var).grid(row=4, column=0, columnspan=2, pady=8)
+        ttk.Checkbutton(dialog, text="Enabled", variable=enabled_var).grid(row=6, column=0, columnspan=2, pady=8)
 
         # Buttons
         def save_variable():
@@ -1014,7 +1121,10 @@ class VRCChatboxGUI:
                 "osc_path": path_var.get().strip(),
                 "threshold": round(threshold_var.get(), 2),
                 "enabled": enabled_var.get(),
-                "shockers": selected_shockers
+                "shockers": selected_shockers,
+                "hold_mode": hold_mode_var.get(),
+                "hold_time": round(hold_time_var.get(), 1),
+                "hold_threshold": round(hold_threshold_var.get(), 2)
             }
 
             save_app_config(self.config)
@@ -1023,7 +1133,7 @@ class VRCChatboxGUI:
             dialog.destroy()
 
         button_frame = ttk.Frame(dialog)
-        button_frame.grid(row=5, column=0, columnspan=2, pady=10)
+        button_frame.grid(row=7, column=0, columnspan=2, pady=10)
         ttk.Button(button_frame, text="Save", command=save_variable).grid(row=0, column=0, padx=5)
         ttk.Button(button_frame, text="Cancel", command=dialog.destroy).grid(row=0, column=1, padx=5)
 
@@ -1066,12 +1176,20 @@ class VRCChatboxGUI:
             osc_path = var.get("osc_path", "")
             threshold = var.get("threshold", 0.0)
             shockers = var.get("shockers", [])
+            hold_mode = var.get("hold_mode", False)
             enabled = "Yes" if var.get("enabled", True) else "No"
 
             # Format shockers count
             shocker_count = f"{len(shockers)}" if shockers else "All"
 
-            self.slide_vars_tree.insert('', tk.END, values=(name, osc_path, f"{threshold:.2f}", shocker_count, enabled))
+            # Format hold mode
+            if hold_mode:
+                hold_time = var.get("hold_time", 3.0)
+                hold_display = f"{hold_time}s"
+            else:
+                hold_display = "-"
+
+            self.slide_vars_tree.insert('', tk.END, values=(name, osc_path, f"{threshold:.2f}", shocker_count, hold_display, enabled))
 
     def on_slide_settings_change(self):
         """Handle Slide settings change"""
@@ -1080,6 +1198,9 @@ class VRCChatboxGUI:
 
         self.config["slide"]["enabled"] = self.slide_enabled_var.get()
         self.config["slide"]["poll_interval"] = round(self.slide_poll_interval_var.get(), 1)
+        self.config["slide"]["intensity_min"] = self.slide_intensity_min_var.get()
+        self.config["slide"]["intensity_max"] = self.slide_intensity_max_var.get()
+        self.config["slide"]["probability_cooldown"] = round(self.slide_probability_cooldown_var.get(), 1)
 
         save_app_config(self.config)
 

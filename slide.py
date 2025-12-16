@@ -21,6 +21,13 @@ class SlideController:
         self.shock_controller = shock_controller
         self.current_values = {}  # {osc_path: float_value}
 
+        # Hold mode tracking
+        self.hold_timers = {}  # {osc_path: threading.Timer}
+        self.hold_active = {}  # {osc_path: bool}
+
+        # Probability mode cooldown tracking
+        self.probability_cooldowns = {}  # {osc_path: timestamp}
+
         # Config
         self.config = {}
 
@@ -63,6 +70,13 @@ class SlideController:
             return
 
         self.polling_active = False
+
+        # Cancel all hold timers
+        for timer in self.hold_timers.values():
+            if timer:
+                timer.cancel()
+        self.hold_timers.clear()
+        self.hold_active.clear()
 
         # Wait for thread to finish (with timeout)
         if self.polling_thread and self.polling_thread.is_alive():
@@ -114,21 +128,40 @@ class SlideController:
 
         # Check threshold
         if current_value < threshold:
+            # Cancel any active hold timer if below threshold
+            self._cancel_hold_timer(osc_path)
             return
 
-        # Cubic probability curve for dramatic ramp-up
-        # P = value³ gives: 0.5→12.5%, 0.7→34%, 0.9→73%
-        probability = current_value ** 3
-        if random.random() <= probability:
-            # Probability succeeded - trigger shock
-            self._trigger_slide_shock(var, current_value)
+        # Handle hold mode (if enabled)
+        if var.get("hold_mode", False):
+            hold_threshold = var.get("hold_threshold", 0.9)
+            hold_time = var.get("hold_time", 3.0)
 
-    def _trigger_slide_shock(self, var, current_value):
+            if current_value >= hold_threshold:
+                # Start hold timer if not already active
+                if osc_path not in self.hold_active or not self.hold_active[osc_path]:
+                    self._start_hold_timer(var, current_value, hold_time)
+            else:
+                # Cancel hold timer if value dropped below threshold
+                self._cancel_hold_timer(osc_path)
+
+        # Cubic probability curve for dramatic ramp-up (always active)
+        # P = value³ gives: 0.5→12.5%, 0.7→34%, 0.9→73%
+        # Check probability cooldown before triggering
+        if not self._is_probability_on_cooldown(osc_path):
+            probability = current_value ** 3
+            if random.random() <= probability:
+                # Probability succeeded - trigger shock with value-based intensity
+                self._trigger_slide_shock(var, current_value, use_value_intensity=True, skip_cooldown=False)
+
+    def _trigger_slide_shock(self, var, current_value, use_value_intensity=True, skip_cooldown=False):
         """Trigger a shock from a slide variable
 
         Args:
             var: Variable configuration that triggered the shock
             current_value: Current OSC value that triggered the shock
+            use_value_intensity: If True, use value-based intensity; if False, use random
+            skip_cooldown: If True, don't start probability cooldown (used for hold mode)
         """
         # Check if shock system is enabled
         if not self.shock_controller.config.get("enabled", False):
@@ -162,8 +195,19 @@ class SlideController:
             print(f"Slide shock skipped - all selected shockers on cooldown")
             return
 
-        # Directly send command to shockers (bypass group-based send_shock)
-        intensity = self.shock_controller.get_shock_intensity()
+        # Calculate intensity
+        if use_value_intensity:
+            # Value-based intensity using global range
+            min_intensity = self.config.get("intensity_min", 30)
+            max_intensity = self.config.get("intensity_max", 70)
+            intensity = int(min_intensity + (current_value * (max_intensity - min_intensity)))
+            intensity = max(0, min(100, intensity))  # Clamp to 0-100
+            intensity_source = "value-based"
+        else:
+            # Use ShockOSC random intensity (for hold mode)
+            intensity = self.shock_controller.get_shock_intensity()
+            intensity_source = "random"
+
         duration = self.shock_controller.config.get("duration", 1.0)
         self.shock_controller.send_openshock_command(available_shockers, intensity, duration)
 
@@ -174,9 +218,15 @@ class SlideController:
                 group = shocker_info.get("group") if isinstance(shocker_info, dict) else shocker_info
                 self.shock_controller.start_cooldown(group)
 
+        # Start probability cooldown if not skipped (hold mode skips this)
+        if not skip_cooldown:
+            osc_path = var.get("osc_path")
+            if osc_path:
+                self._start_probability_cooldown(osc_path)
+
         var_name = var.get("name", var.get("osc_path", "unknown"))
-        probability = current_value ** 3
-        print(f"Slide shock triggered from '{var_name}' (value: {current_value:.2f}, probability: {probability:.1%}, shockers: {len(available_shockers)})")
+        trigger_type = "hold mode" if skip_cooldown else "probability"
+        print(f"Slide shock triggered from '{var_name}' [{trigger_type}] (value: {current_value:.2f}, intensity: {intensity}% [{intensity_source}], shockers: {len(available_shockers)})")
 
     def _handle_variable_update(self, address, *args):
         """OSC handler to cache variable values
@@ -222,3 +272,84 @@ class SlideController:
         """
         # Delegate to shock controller
         return self.shock_controller.is_group_on_cooldown(group)
+
+    def _start_hold_timer(self, var, current_value, hold_time):
+        """Start hold timer for a variable
+
+        Args:
+            var: Variable configuration
+            current_value: Current OSC value
+            hold_time: How long to hold before triggering (seconds)
+        """
+        osc_path = var.get("osc_path")
+
+        # Cancel existing timer if any
+        self._cancel_hold_timer(osc_path)
+
+        # Mark as active
+        self.hold_active[osc_path] = True
+
+        # Create timer
+        timer = threading.Timer(hold_time, self._trigger_hold_shock, [var, current_value])
+        self.hold_timers[osc_path] = timer
+        timer.start()
+
+        print(f"Hold timer started for '{var_name}' ({hold_time}s)")
+
+    def _cancel_hold_timer(self, osc_path):
+        """Cancel hold timer for a variable
+
+        Args:
+            osc_path: OSC path to cancel timer for
+        """
+        if osc_path in self.hold_timers:
+            timer = self.hold_timers[osc_path]
+            if timer:
+                timer.cancel()
+            del self.hold_timers[osc_path]
+
+        if osc_path in self.hold_active:
+            del self.hold_active[osc_path]
+
+    def _trigger_hold_shock(self, var, current_value):
+        """Trigger shock from hold mode (uses random intensity)
+
+        Args:
+            var: Variable configuration that triggered the shock
+            current_value: Current OSC value when hold timer started
+        """
+        osc_path = var.get("osc_path")
+
+        # Clear hold state
+        if osc_path in self.hold_active:
+            del self.hold_active[osc_path]
+
+        var_name = var.get("name", osc_path)
+        print(f"Hold mode shock triggered for '{var_name}' (value: {current_value:.2f})")
+
+        # Trigger with random intensity (not value-based), bypassing cooldown
+        self._trigger_slide_shock(var, current_value, use_value_intensity=False, skip_cooldown=True)
+
+    def _is_probability_on_cooldown(self, osc_path):
+        """Check if a variable is on probability cooldown
+
+        Args:
+            osc_path: OSC path to check
+
+        Returns:
+            bool: True if on cooldown, False otherwise
+        """
+        if osc_path not in self.probability_cooldowns:
+            return False
+
+        cooldown_time = self.config.get("probability_cooldown", 10.0)
+        elapsed = time.time() - self.probability_cooldowns[osc_path]
+        return elapsed < cooldown_time
+
+    def _start_probability_cooldown(self, osc_path):
+        """Start probability cooldown for a variable
+
+        Args:
+            osc_path: OSC path to start cooldown for
+        """
+        self.probability_cooldowns[osc_path] = time.time()

@@ -69,6 +69,9 @@ def load_app_config():
         "slide": {
             "enabled": False,  # Master toggle for Slide feature
             "poll_interval": 1.0,  # Poll rate in seconds (0.1-10.0)
+            "intensity_min": 30,  # Minimum intensity for value-based shocks (0-100%)
+            "intensity_max": 70,  # Maximum intensity for value-based shocks (0-100%)
+            "probability_cooldown": 10.0,  # Cooldown for probability-based shocks (0.0-60.0 seconds)
             "variables": []  # List of OSC variables to monitor
         }
     }
