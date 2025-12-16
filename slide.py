@@ -160,7 +160,7 @@ class SlideController:
         Args:
             var: Variable configuration that triggered the shock
             current_value: Current OSC value that triggered the shock
-            use_value_intensity: If True, use value-based intensity; if False, use random
+            use_value_intensity: If True, use value-based intensity; if False, use random from hold mode range
             skip_cooldown: If True, don't start probability cooldown (used for hold mode)
         """
         # Check if shock system is enabled
@@ -181,6 +181,7 @@ class SlideController:
 
         # Filter out shockers whose groups are on cooldown
         available_shockers = []
+        affected_groups = []
         for shocker_id in variable_shockers:
             if shocker_id in shockers_config:
                 shocker_info = shockers_config[shocker_id]
@@ -190,6 +191,8 @@ class SlideController:
                 # Only include if group is not on cooldown
                 if not self.shock_controller.is_group_on_cooldown(group):
                     available_shockers.append(shocker_id)
+                    if group not in affected_groups:
+                        affected_groups.append(group)
 
         if not available_shockers:
             print(f"Slide shock skipped - all selected shockers on cooldown")
@@ -204,19 +207,21 @@ class SlideController:
             intensity = max(0, min(100, intensity))  # Clamp to 0-100
             intensity_source = "value-based"
         else:
-            # Use ShockOSC random intensity (for hold mode)
-            intensity = self.shock_controller.get_shock_intensity()
-            intensity_source = "random"
+            # Use hold mode intensity range
+            hold_min = self.config.get("hold_intensity_min", 80)
+            hold_max = self.config.get("hold_intensity_max", 90)
+            intensity = random.randint(hold_min, hold_max)
+            intensity_source = "hold mode"
 
         duration = self.shock_controller.config.get("duration", 1.0)
         self.shock_controller.send_openshock_command(available_shockers, intensity, duration)
 
-        # Start cooldown for affected groups
-        for shocker_id in available_shockers:
-            if shocker_id in shockers_config:
-                shocker_info = shockers_config[shocker_id]
-                group = shocker_info.get("group") if isinstance(shocker_info, dict) else shocker_info
-                self.shock_controller.start_cooldown(group)
+        # Start cooldown for affected groups and trigger shock callback
+        for group in affected_groups:
+            self.shock_controller.start_cooldown(group)
+            # Trigger the shock callback to display in chatbox
+            if self.shock_controller.shock_callback:
+                self.shock_controller.shock_callback(intensity, group, duration)
 
         # Start probability cooldown if not skipped (hold mode skips this)
         if not skip_cooldown:
@@ -294,6 +299,7 @@ class SlideController:
         self.hold_timers[osc_path] = timer
         timer.start()
 
+        var_name = var.get("name", osc_path)
         print(f"Hold timer started for '{var_name}' ({hold_time}s)")
 
     def _cancel_hold_timer(self, osc_path):
