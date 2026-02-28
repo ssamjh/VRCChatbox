@@ -73,6 +73,9 @@ def load_app_config():
             "intensity_max": 70,  # Maximum intensity for value-based shocks (0-100%)
             "probability_cooldown": 10.0,  # Cooldown for probability-based shocks (0.0-60.0 seconds)
             "variables": []  # List of OSC variables to monitor
+        },
+        "joinmymusic": {
+            "sse_url": "https://joinmymusic.com/api/events"
         }
     }
 
@@ -96,6 +99,12 @@ def load_app_config():
                     default_slide = default_config["slide"].copy()
                     default_slide.update(user_config["slide"])
                     merged_config["slide"] = default_slide
+
+                # Deep merge the joinmymusic config to ensure new fields are added
+                if "joinmymusic" in default_config:
+                    default_jmm = default_config["joinmymusic"].copy()
+                    default_jmm.update(user_config.get("joinmymusic", {}))
+                    merged_config["joinmymusic"] = default_jmm
 
                 # Ensure messages section exists and merge with defaults
                 if "messages" not in merged_config:

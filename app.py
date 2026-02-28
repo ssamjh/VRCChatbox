@@ -59,6 +59,11 @@ class VRChatMessenger:
         self.boop_counter = BoopCounter()
         data_cache.boop_counter = self.boop_counter  # Share the same instance
 
+        # Start SSE listener for JoinMyMusic
+        jmm_config = self.app_config.get("joinmymusic", {})
+        sse_url = jmm_config.get("sse_url", "https://joinmymusic.com/api/events")
+        data_cache.start_sse(sse_url)
+
         # Initialize messages AFTER boop_counter is set up
         self._initialize_messages()
 
@@ -205,7 +210,7 @@ class VRChatMessenger:
             return False
 
         metadata = jmm_data["metadata"]
-        if not metadata["current"]["playing"]:
+        if not metadata.get("playing"):
             # If music stopped playing, update display to remove music info
             if self.current_song is not None or self.current_artist is not None:
                 self.current_song = None
@@ -213,10 +218,10 @@ class VRChatMessenger:
                 return True
             return False
 
-        new_song = metadata["current"]["song"]
+        new_song = metadata.get("song")
         new_artist = (
-            ", ".join(artist["name"] for artist in metadata["current"]["artist"])
-            if metadata["current"]["artist"]
+            ", ".join(artist["name"] for artist in metadata["artist"])
+            if metadata.get("artist")
             else ""
         )
 
@@ -529,10 +534,10 @@ class VRChatMessenger:
             jmm_data = data_cache.get_jmm_data()
             if not jmm_data.get("metadata"):
                 return False
-            if not jmm_data["metadata"]["current"]["playing"]:
+            if not jmm_data["metadata"].get("playing"):
                 return False
             if category in ["joinmymusic_artist", "joinmymusic_song"]:
-                if not jmm_data["metadata"]["current"]["song"]:
+                if not jmm_data["metadata"].get("song"):
                     return False
             return True
 

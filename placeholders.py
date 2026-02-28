@@ -1,15 +1,20 @@
-import requests
+import json
+import threading
 import time
 from datetime import datetime
+
+import requests
 
 
 class DataCache:
     def __init__(self):
         self.jmm_cache = {}
-        self.jmm_last_update = 0
-        self.jmm_update_interval = 5
+        self._jmm_lock = threading.Lock()
+        self._sse_thread = None
+        self._sse_running = False
+        self._sse_url = None
         self.boop_counter = None  # Will be set by VRChatMessenger
-        self.shock_data = {"intensity": 0, "group": "none", "duration": 0}  # Current shock info
+        self.shock_data = {"intensity": 0, "group": "none", "duration": 0}
         self.internet_shock_data = {
             "user_name": "Unknown",
             "real_name": "Unknown",
@@ -19,30 +24,54 @@ class DataCache:
             "duration": 0,
             "is_guest": False,
             "share_link_id": None
-        }  # Current internet shock info
+        }
+
+    def start_sse(self, url):
+        """Start the SSE listener thread."""
+        self._sse_url = url
+        self._sse_running = True
+        self._sse_thread = threading.Thread(target=self._sse_worker, daemon=True)
+        self._sse_thread.start()
+        print(f"SSE listener started: {url}")
+
+    def _sse_worker(self):
+        """Background thread: connect to SSE endpoint and reconnect on failure."""
+        while self._sse_running:
+            try:
+                with requests.get(self._sse_url, stream=True, timeout=(10, None)) as response:
+                    response.raise_for_status()
+                    print(f"SSE connected to {self._sse_url}")
+                    event_type = None
+                    for raw_line in response.iter_lines():
+                        if not self._sse_running:
+                            return
+                        line = raw_line.decode("utf-8") if isinstance(raw_line, bytes) else raw_line
+                        if line.startswith("event:"):
+                            event_type = line[len("event:"):].strip()
+                        elif line.startswith("data:"):
+                            data_str = line[len("data:"):].strip()
+                            try:
+                                data = json.loads(data_str)
+                                with self._jmm_lock:
+                                    if event_type == "metadata":
+                                        self.jmm_cache["metadata"] = data
+                                    elif event_type == "listeners":
+                                        self.jmm_cache["listeners"] = data
+                            except json.JSONDecodeError:
+                                pass
+                        # Lines starting with ':' are SSE comments/keepalives — ignore
+            except Exception as e:
+                if self._sse_running:
+                    print(f"SSE error ({e}), reconnecting in 5s...")
+                    time.sleep(5)
 
     def get_jmm_data(self):
-        if time.time() - self.jmm_last_update > self.jmm_update_interval:
-            try:
-                metadata = requests.get("https://joinmymusic.com/metadata.php")
-                listeners = requests.get("https://joinmymusic.com/listeners.php?stats")
-
-                if metadata.status_code == 200 and listeners.status_code == 200:
-                    self.jmm_cache = {
-                        "metadata": metadata.json(),
-                        "listeners": listeners.json(),
-                    }
-                    self.jmm_last_update = time.time()
-            except Exception as e:
-                print(f"Error updating JMM data: {e}")
-        return self.jmm_cache
+        with self._jmm_lock:
+            return dict(self.jmm_cache)
 
     def get_boop_data(self):
-        # Make sure boop_counter has been set
         if self.boop_counter is None:
             return {"total_boops": 0, "daily_boops": 0, "counter_enabled": False}
-
-        # Make sure to reload from file each time to get latest values
         self.boop_counter._load_data()
         return self.boop_counter.get_boops_data()
 
@@ -82,11 +111,9 @@ def truncate_text(text, max_length=27):
 
 
 def get_placeholder_value(placeholder):
-    # Remove locatesam.com data fetch
     jmm_data = data_cache.get_jmm_data()
     boop_data = data_cache.get_boop_data()
 
-    # Handle only the placeholders we need
     if placeholder in ["total_boops", "daily_boops"]:
         return boop_data.get(placeholder, 0)
 
@@ -94,20 +121,19 @@ def get_placeholder_value(placeholder):
         return datetime.now().strftime("%I:%M %p")
 
     if placeholder == "jmm_artist":
-        if not jmm_data.get("metadata"):
+        metadata = jmm_data.get("metadata")
+        if not metadata:
             return "No data"
+        artists = metadata.get("artist") or []
         return truncate_text(
-            ", ".join(
-                artist["name"] for artist in jmm_data["metadata"]["current"]["artist"]
-            )
-            if jmm_data.get("metadata") and jmm_data["metadata"]["current"]["artist"]
-            else "No artist"
+            ", ".join(a["name"] for a in artists) if artists else "No artist"
         )
 
     if placeholder == "jmm_song":
-        if not jmm_data.get("metadata"):
+        metadata = jmm_data.get("metadata")
+        if not metadata:
             return "No data"
-        return truncate_text(jmm_data["metadata"]["current"]["song"] or "No song")
+        return truncate_text(metadata.get("song") or "No song")
 
     if placeholder == "shock_intensity":
         return str(data_cache.get_shock_data()["intensity"])
@@ -119,7 +145,6 @@ def get_placeholder_value(placeholder):
         duration = data_cache.get_shock_data()["duration"]
         return f"{duration:.1f}s" if duration else "0s"
 
-    # Internet shock placeholders
     if placeholder == "internet_shock_user":
         return data_cache.get_internet_shock_data()["user_name"]
 
@@ -136,5 +161,4 @@ def get_placeholder_value(placeholder):
         duration_ms = data_cache.get_internet_shock_data()["duration"]
         return f"{duration_ms/1000:.1f}s" if duration_ms else "0s"
 
-    # If we get here, it's an unknown placeholder
     return f"Error: {placeholder}"
