@@ -418,7 +418,7 @@ class VRCChatboxGUI(QMainWindow):
         self._bridge = _Bridge()
 
         self.setWindowTitle("VRC Chatbox Settings")
-        self.setFixedSize(1280, 760)
+        self.setFixedSize(1600, 900)
         self.app.setStyleSheet(STYLE)
         self._center_window()
         self._setup_ui()
@@ -600,49 +600,38 @@ class VRCChatboxGUI(QMainWindow):
         sg = QGridLayout(shock_card)
         sg.setSpacing(16)
         sg.setContentsMargins(20, 24, 20, 20)
+        sg.setColumnMinimumWidth(0, 130)
+        sg.setColumnStretch(1, 1)
 
-        # Static intensity container
-        self._static_container = QWidget()
-        sc_row = QHBoxLayout(self._static_container)
-        sc_row.setContentsMargins(0, 0, 0, 0)
-        sc_row.setSpacing(16)
-        sc_row.addWidget(_label("Intensity %", "field_label"))
-        self.static_spinbox = Stepper(0, 100, 1, sc.get("static_intensity", 50), spin_width=100)
-        sc_row.addWidget(self.static_spinbox)
-        sc_row.addStretch()
+        # Rows 0-2: intensity controls — each in its own row so columns align with
+        # Duration/Cooldown/Hold below. Hidden rows collapse to 0px in QGridLayout.
+        self._static_label = _label("Intensity %", "field_label")
+        self.static_spinbox = Stepper(0, 100, 1, sc.get("static_intensity", 50), spin_width=90)
+        sg.addWidget(self._static_label, 0, 0)
+        sg.addWidget(self.static_spinbox, 0, 1)
 
-        # Random min/max container
-        self._random_container = QWidget()
-        rc_row = QHBoxLayout(self._random_container)
-        rc_row.setContentsMargins(0, 0, 0, 0)
-        rc_row.setSpacing(16)
-        rc_row.addWidget(_label("Min %", "field_label"))
-        self.random_min_spinbox = Stepper(0, 100, 1, sc.get("random_min", 20), spin_width=100)
-        rc_row.addWidget(self.random_min_spinbox)
-        rc_row.addSpacing(20)
-        rc_row.addWidget(_label("Max %", "field_label"))
-        self.random_max_spinbox = Stepper(0, 100, 1, sc.get("random_max", 80), spin_width=100)
-        rc_row.addWidget(self.random_max_spinbox)
-        rc_row.addStretch()
+        self._rand_min_label = _label("Min %", "field_label")
+        self.random_min_spinbox = Stepper(0, 100, 1, sc.get("random_min", 20), spin_width=90)
+        sg.addWidget(self._rand_min_label, 1, 0)
+        sg.addWidget(self.random_min_spinbox, 1, 1)
 
-        # Use a stacked widget so only one row is visible at a time (avoids same-cell overlap)
-        self._mode_stack = QStackedWidget()
-        self._mode_stack.addWidget(self._static_container)   # index 0
-        self._mode_stack.addWidget(self._random_container)   # index 1
-        sg.addWidget(self._mode_stack, 0, 0, 1, 2)
+        self._rand_max_label = _label("Max %", "field_label")
+        self.random_max_spinbox = Stepper(0, 100, 1, sc.get("random_max", 80), spin_width=90)
+        sg.addWidget(self._rand_max_label, 2, 0)
+        sg.addWidget(self.random_max_spinbox, 2, 1)
 
         # Duration / Cooldown / Hold
-        sg.addWidget(_label("Duration (s)", "field_label"), 1, 0)
+        sg.addWidget(_label("Duration (s)", "field_label"), 3, 0)
         self.duration_spinbox = Stepper(0.3, 30.0, 0.1, sc.get("duration", 1.0), decimals=1, spin_width=90)
-        sg.addWidget(self.duration_spinbox, 1, 1)
+        sg.addWidget(self.duration_spinbox, 3, 1)
 
-        sg.addWidget(_label("Cooldown (s)", "field_label"), 2, 0)
+        sg.addWidget(_label("Cooldown (s)", "field_label"), 4, 0)
         self.cooldown_spinbox = Stepper(0.0, 60.0, 0.1, sc.get("cooldown_delay", 5.0), decimals=1, spin_width=90)
-        sg.addWidget(self.cooldown_spinbox, 2, 1)
+        sg.addWidget(self.cooldown_spinbox, 4, 1)
 
-        sg.addWidget(_label("Hold Time (s)", "field_label"), 3, 0)
+        sg.addWidget(_label("Hold Time (s)", "field_label"), 5, 0)
         self.hold_time_spinbox = Stepper(0.0, 5.0, 0.1, sc.get("hold_time", 0.5), decimals=2, spin_width=90)
-        sg.addWidget(self.hold_time_spinbox, 3, 1)
+        sg.addWidget(self.hold_time_spinbox, 5, 1)
 
         left.addWidget(shock_card)
         left.addStretch()
@@ -676,12 +665,11 @@ class VRCChatboxGUI(QMainWindow):
 
         og.addWidget(_label("Shocker Assignments", "field_label"))
 
-        self.shockers_table = QTableWidget(0, 3)
-        self.shockers_table.setHorizontalHeaderLabels(["Name", "ID", "Group"])
+        self.shockers_table = QTableWidget(0, 2)
+        self.shockers_table.setHorizontalHeaderLabels(["Name", "Group"])
         hh = self.shockers_table.horizontalHeader()
         hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         hh.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        hh.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.shockers_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.shockers_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.shockers_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -690,23 +678,19 @@ class VRCChatboxGUI(QMainWindow):
         self.shockers_table.verticalHeader().setVisible(False)
         og.addWidget(self.shockers_table)
 
-        assign_row = QHBoxLayout()
-        assign_row.setSpacing(12)
-        assign_row.addWidget(_label("Assign to:", "field_label"))
-        self.group_combo = QComboBox()
-        self.group_combo.addItems(["leftleg", "rightleg"])
-        self.group_combo.setCurrentIndex(-1)
-        self.group_combo.setPlaceholderText("Select group…")
-        self.group_combo.setFixedWidth(180)
-        assign_row.addWidget(self.group_combo)
-        self.assign_button = QPushButton("Assign")
-        self.assign_button.clicked.connect(self.assign_shocker)
-        assign_row.addWidget(self.assign_button)
-        self.unassign_button = QPushButton("Unassign")
-        self.unassign_button.clicked.connect(self.unassign_shocker)
-        assign_row.addWidget(self.unassign_button)
-        assign_row.addStretch()
-        og.addLayout(assign_row)
+        shocker_btns_row = QHBoxLayout()
+        shocker_btns_row.setSpacing(12)
+        self.add_shocker_btn = QPushButton("Add Shocker")
+        self.add_shocker_btn.clicked.connect(self.add_shocker)
+        self.edit_shocker_btn = QPushButton("Edit Selected")
+        self.edit_shocker_btn.clicked.connect(self.edit_shocker)
+        self.remove_shocker_btn = QPushButton("Remove Selected")
+        self.remove_shocker_btn.clicked.connect(self.remove_shocker)
+        shocker_btns_row.addWidget(self.add_shocker_btn)
+        shocker_btns_row.addWidget(self.edit_shocker_btn)
+        shocker_btns_row.addWidget(self.remove_shocker_btn)
+        shocker_btns_row.addStretch()
+        og.addLayout(shocker_btns_row)
 
         og.addWidget(_hline())
 
@@ -855,7 +839,13 @@ class VRCChatboxGUI(QMainWindow):
     # ── ShockOSC logic ─────────────────────────────────────────────────────
 
     def on_mode_change(self, *_):
-        self._mode_stack.setCurrentIndex(0 if self.static_radio.isChecked() else 1)
+        is_static = self.static_radio.isChecked()
+        self._static_label.setVisible(is_static)
+        self.static_spinbox.setVisible(is_static)
+        self._rand_min_label.setVisible(not is_static)
+        self.random_min_spinbox.setVisible(not is_static)
+        self._rand_max_label.setVisible(not is_static)
+        self.random_max_spinbox.setVisible(not is_static)
         self.on_shock_settings_change()
 
     def on_shock_settings_change(self, *_):
@@ -1007,59 +997,95 @@ class VRCChatboxGUI(QMainWindow):
             QMessageBox.information(self, "No Shockers",
                 "No shockers found. Check your OpenShock account.")
             return
-        QMessageBox.information(self, "Success", f"Discovered {len(shockers)} shocker(s).")
+        existing = self.config["shockosc"].setdefault("shockers", {})
+        added = 0
+        for sid, s in self.discovered_shockers.items():
+            if sid not in existing:
+                existing[sid] = {
+                    "name": s["name"],
+                    "group": "",
+                    "device_name": s.get("device_name", "Unknown"),
+                }
+                added += 1
+        if added:
+            save_app_config(self.config)
+            if self.messenger and hasattr(self.messenger, 'update_shock_config'):
+                self.messenger.update_shock_config(self.config["shockosc"])
         self.refresh_shockers_display()
+        QMessageBox.information(self, "Success",
+            f"Discovered {len(shockers)} shocker(s). {added} new shocker(s) added.")
 
     def refresh_shockers_display(self):
         self.shockers_table.setRowCount(0)
-        assigned = self.config.get("shockosc", {}).get("shockers", {})
-        if hasattr(self, 'discovered_shockers'):
-            for sid, s in self.discovered_shockers.items():
-                info = assigned.get(sid)
-                group = info.get("group", "") if isinstance(info, dict) else (info or "")
-                self._add_shocker_row(f"{s['name']} ({s['device_name']})", sid, group)
-        else:
-            for sid, info in assigned.items():
-                if isinstance(info, dict):
-                    name = f"{info.get('name', sid[:8])} ({info.get('device_name', 'Unknown')})"
-                    group = info.get("group", "")
-                else:
-                    name, group = f"Shocker {sid[:8]}…", info
-                self._add_shocker_row(name, sid, group)
+        for sid, info in self.config.get("shockosc", {}).get("shockers", {}).items():
+            if isinstance(info, dict):
+                name = info.get('name', f"Shocker {sid[:8]}…")
+                group = info.get("group", "")
+            else:
+                name = f"Shocker {sid[:8]}…"
+                group = info or ""
+            self._add_shocker_row(name, sid, group)
 
     def _add_shocker_row(self, name, sid, group):
         r = self.shockers_table.rowCount()
         self.shockers_table.insertRow(r)
-        self.shockers_table.setItem(r, 0, QTableWidgetItem(name))
-        self.shockers_table.setItem(r, 1, QTableWidgetItem(str(sid)))
-        self.shockers_table.setItem(r, 2, QTableWidgetItem(group))
+        name_item = QTableWidgetItem(name)
+        name_item.setData(Qt.ItemDataRole.UserRole, sid)
+        self.shockers_table.setItem(r, 0, name_item)
+        self.shockers_table.setItem(r, 1, QTableWidgetItem(group))
 
-    def assign_shocker(self):
+    def add_shocker(self):
+        dlg = ShockerEditDialog(self, mode="add",
+                                discovered=getattr(self, 'discovered_shockers', {}))
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            data = dlg.get_data()
+            sid = data["id"]
+            if not sid:
+                return
+            self.config["shockosc"].setdefault("shockers", {})[sid] = {
+                "name": data["name"],
+                "group": data["group"],
+                "device_name": "Manual",
+            }
+            save_app_config(self.config)
+            if self.messenger and hasattr(self.messenger, 'update_shock_config'):
+                self.messenger.update_shock_config(self.config["shockosc"])
+            self.refresh_shockers_display()
+            self._set_status("Shocker added")
+
+    def edit_shocker(self):
         row = self.shockers_table.currentRow()
         if row < 0:
             QMessageBox.warning(self, "No Selection", "Select a shocker first."); return
-        group = self.group_combo.currentText()
-        if not group:
-            QMessageBox.warning(self, "No Group", "Select a group first."); return
-        sid = self.shockers_table.item(row, 1).text()
-        info = self.discovered_shockers.get(sid) if hasattr(self, 'discovered_shockers') else None
-        self.config["shockosc"].setdefault("shockers", {})[sid] = {
-            "group": group,
-            "name": info.get('name', f"Shocker {sid[:8]}") if info else f"Shocker {sid[:8]}",
-            "device_name": info.get('device_name', 'Unknown') if info else 'Unknown',
-        }
-        save_app_config(self.config)
-        if self.messenger and hasattr(self.messenger, 'update_shock_config'):
-            self.messenger.update_shock_config(self.config["shockosc"])
-        self.refresh_shockers_display()
-        self.group_combo.setCurrentIndex(-1)
-        self._set_status(f"Shocker assigned to {group}")
+        sid = self.shockers_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+        info = self.config.get("shockosc", {}).get("shockers", {}).get(sid, {})
+        if isinstance(info, str):
+            info = {"name": f"Shocker {sid[:8]}…", "group": info}
+        dlg = ShockerEditDialog(self, mode="edit", current={
+            "name": info.get("name", f"Shocker {sid[:8]}…"),
+            "group": info.get("group", ""),
+        })
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            data = dlg.get_data()
+            self.config["shockosc"].setdefault("shockers", {})[sid] = {
+                **info,
+                "name": data["name"],
+                "group": data["group"],
+            }
+            save_app_config(self.config)
+            if self.messenger and hasattr(self.messenger, 'update_shock_config'):
+                self.messenger.update_shock_config(self.config["shockosc"])
+            self.refresh_shockers_display()
+            self._set_status("Shocker updated")
 
-    def unassign_shocker(self):
+    def remove_shocker(self):
         row = self.shockers_table.currentRow()
         if row < 0:
             QMessageBox.warning(self, "No Selection", "Select a shocker first."); return
-        sid = self.shockers_table.item(row, 1).text()
+        sid = self.shockers_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+        if QMessageBox.question(self, "Confirm", "Remove this shocker?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        ) != QMessageBox.StandardButton.Yes: return
         shockers = self.config.get("shockosc", {}).get("shockers", {})
         if sid in shockers:
             del shockers[sid]
@@ -1067,7 +1093,7 @@ class VRCChatboxGUI(QMainWindow):
             if self.messenger and hasattr(self.messenger, 'update_shock_config'):
                 self.messenger.update_shock_config(self.config["shockosc"])
             self.refresh_shockers_display()
-            self._set_status("Shocker unassigned")
+            self._set_status("Shocker removed")
 
     def test_leftleg(self):
         if not self.messenger or not hasattr(self.messenger, 'shock_controller'): return
@@ -1181,13 +1207,18 @@ class VRCChatboxGUI(QMainWindow):
 
 # ── Dialogs ───────────────────────────────────────────────────────────────────
 
-class SlideVariableDialog(QDialog):
-    def __init__(self, parent, current, config):
+class ShockerEditDialog(QDialog):
+    def __init__(self, parent, mode="add", current=None, discovered=None):
+        """
+        mode="add"  — fields: Shocker (dropdown or manual ID), Name, Group
+        mode="edit" — fields: Name, Group
+        discovered  — dict {id: {name, device_name, ...}} from Discover Shockers
+        """
         super().__init__(parent)
-        self.config = config
-        self.selected_shockers = list(current.get("shockers", [])) if current else []
-        self.setWindowTitle("Edit Variable" if current else "Add Variable")
-        self.setFixedSize(560, 400)
+        self.mode = mode
+        self._discovered = discovered or {}
+        self.setWindowTitle("Add Shocker" if mode == "add" else "Edit Shocker")
+        self.setFixedSize(420, 280 if mode == "add" else 220)
         self.setModal(True)
 
         layout = QVBoxLayout(self)
@@ -1196,7 +1227,98 @@ class SlideVariableDialog(QDialog):
 
         grid = QGridLayout()
         grid.setSpacing(14)
+        grid.setColumnMinimumWidth(0, 120)
+        next_row = 0
+
+        if mode == "add":
+            grid.addWidget(_label("Shocker", "field_label"), next_row, 0)
+            if self._discovered:
+                # Dropdown of discovered shockers
+                self._shocker_combo = QComboBox()
+                for sid, s in self._discovered.items():
+                    label = f"{s['name']}  ({s.get('device_name', '')})"
+                    self._shocker_combo.addItem(label, userData=sid)
+                self._shocker_combo.currentIndexChanged.connect(self._on_shocker_selected)
+                grid.addWidget(self._shocker_combo, next_row, 1)
+                self._id_edit = None
+            else:
+                # Fallback: manual UUID entry
+                self._id_edit = QLineEdit()
+                self._id_edit.setPlaceholderText("UUID from OpenShock")
+                grid.addWidget(self._id_edit, next_row, 1)
+                self._shocker_combo = None
+            next_row += 1
+
+        grid.addWidget(_label("Name", "field_label"), next_row, 0)
+        self.name_edit = QLineEdit()
+        if current:
+            self.name_edit.setText(current.get("name", ""))
+        grid.addWidget(self.name_edit, next_row, 1)
+        next_row += 1
+
+        grid.addWidget(_label("Group", "field_label"), next_row, 0)
+        self.group_edit = QLineEdit()
+        self.group_edit.setPlaceholderText("e.g. leftleg")
+        if current:
+            self.group_edit.setText(current.get("group", ""))
+        grid.addWidget(self.group_edit, next_row, 1)
+
+        layout.addLayout(grid)
+        layout.addStretch()
+
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Save |
+                                QDialogButtonBox.StandardButton.Cancel)
+        btns.accepted.connect(self._validate)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+        # Pre-fill name from first discovered shocker
+        if mode == "add" and self._discovered:
+            self._on_shocker_selected(0)
+
+    def _on_shocker_selected(self, index):
+        sid = self._shocker_combo.itemData(index)
+        if sid and sid in self._discovered:
+            self.name_edit.setText(self._discovered[sid]["name"])
+
+    def _validate(self):
+        if not self.name_edit.text().strip():
+            QMessageBox.critical(self, "Error", "Name cannot be empty."); return
+        if self.mode == "add" and self._id_edit is not None and not self._id_edit.text().strip():
+            QMessageBox.critical(self, "Error", "Shocker ID cannot be empty."); return
+        self.accept()
+
+    def get_data(self):
+        selected_id = None
+        if self.mode == "add":
+            if self._shocker_combo is not None:
+                selected_id = self._shocker_combo.currentData()
+            elif self._id_edit is not None:
+                selected_id = self._id_edit.text().strip()
+        return {
+            "name": self.name_edit.text().strip(),
+            "id": selected_id,
+            "group": self.group_edit.text().strip(),
+        }
+
+
+class SlideVariableDialog(QDialog):
+    def __init__(self, parent, current, config):
+        super().__init__(parent)
+        self.config = config
+        self.selected_shockers = list(current.get("shockers", [])) if current else []
+        self.setWindowTitle("Edit Variable" if current else "Add Variable")
+        self.setFixedSize(700, 540)
+        self.setModal(True)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(32, 32, 32, 24)
+        layout.setSpacing(20)
+
+        grid = QGridLayout()
+        grid.setSpacing(16)
         grid.setColumnMinimumWidth(0, 160)
+        grid.setColumnStretch(1, 1)
 
         grid.addWidget(_label("Name", "field_label"), 0, 0)
         self.name_edit = QLineEdit()
@@ -1211,10 +1333,7 @@ class SlideVariableDialog(QDialog):
         grid.addWidget(_label("Threshold (0–1)", "field_label"), 2, 0)
         self.threshold_s = Stepper(0.0, 1.0, 0.05, current.get("threshold", 0.0) if current else 0.0,
                                    decimals=2, spin_width=110)
-        thr_row = QHBoxLayout()
-        thr_row.addWidget(self.threshold_s)
-        thr_row.addStretch()
-        grid.addLayout(thr_row, 2, 1)
+        grid.addWidget(self.threshold_s, 2, 1)
 
         grid.addWidget(_label("Shockers", "field_label"), 3, 0)
         self.shocker_btn = QPushButton("Select Shockers (All)")
@@ -1228,20 +1347,14 @@ class SlideVariableDialog(QDialog):
         grid.addWidget(self.hold_mode_cb, 4, 1)
 
         grid.addWidget(_label("Hold Time (s)", "field_label"), 5, 0)
-        ht_row = QHBoxLayout()
         self.hold_time_s = Stepper(1.0, 10.0, 0.5, current.get("hold_time", 3.0) if current else 3.0,
                                    decimals=1, spin_width=110)
-        ht_row.addWidget(self.hold_time_s)
-        ht_row.addStretch()
-        grid.addLayout(ht_row, 5, 1)
+        grid.addWidget(self.hold_time_s, 5, 1)
 
         grid.addWidget(_label("Hold Threshold", "field_label"), 6, 0)
-        hth_row = QHBoxLayout()
         self.hold_thresh_s = Stepper(0.0, 1.0, 0.05, current.get("hold_threshold", 0.9) if current else 0.9,
                                      decimals=2, spin_width=110)
-        hth_row.addWidget(self.hold_thresh_s)
-        hth_row.addStretch()
-        grid.addLayout(hth_row, 6, 1)
+        grid.addWidget(self.hold_thresh_s, 6, 1)
 
         grid.addWidget(_label("Status", "field_label"), 7, 0)
         self.enabled_cb = QCheckBox("Enabled")
