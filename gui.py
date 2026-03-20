@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QRadioButton, QSpinBox, QDoubleSpinBox, QAbstractSpinBox, QLineEdit,
     QComboBox, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
     QDialog, QDialogButtonBox, QAbstractItemView, QButtonGroup, QFrame,
-    QSizePolicy, QScrollArea,
+    QSizePolicy, QScrollArea, QInputDialog,
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject
 from PyQt6.QtGui import QFont
@@ -18,6 +18,11 @@ from config import load_app_config, save_app_config
 # ── Palette ───────────────────────────────────────────────────────────────────
 # Inline SVG arrow for combobox (border-trick doesn't work in Qt)
 _ARROW_SVG = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'><polygon points='0,0 10,0 5,6' fill='%23CAC4D0'/></svg>"
+
+# Inline SVG radio-button indicators — CSS background-color on ::indicator is unreliable
+_RADIO_OFF_SVG     = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'><circle cx='9' cy='9' r='7.5' fill='none' stroke='%23938F99' stroke-width='2'/></svg>"
+_RADIO_HOVER_SVG   = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'><circle cx='9' cy='9' r='7.5' fill='none' stroke='%23D0BCFF' stroke-width='2'/></svg>"
+_RADIO_ON_SVG      = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'><circle cx='9' cy='9' r='7.5' fill='none' stroke='%23D0BCFF' stroke-width='2'/><circle cx='9' cy='9' r='4.5' fill='%23D0BCFF'/></svg>"
 
 BG       = "#1C1B1F"   # main background
 SURFACE  = "#2B2930"   # cards / sidebar
@@ -226,14 +231,13 @@ QCheckBox::indicator:checked {{
 }}
 QRadioButton::indicator {{
     width: 18px; height: 18px;
-    border: 2px solid {OUTLINE};
-    border-radius: 9px;
-    background-color: transparent;
+    image: url({_RADIO_OFF_SVG});
 }}
-QRadioButton::indicator:hover {{ border-color: {PRIMARY}; }}
+QRadioButton::indicator:hover {{
+    image: url({_RADIO_HOVER_SVG});
+}}
 QRadioButton::indicator:checked {{
-    background-color: {PRIMARY};
-    border-color: {PRIMARY};
+    image: url({_RADIO_ON_SVG});
 }}
 
 /* ── Table ── */
@@ -247,7 +251,7 @@ QTableWidget {{
     font-size: 10pt;
 }}
 QTableWidget::item {{
-    padding: 8px 12px;
+    padding: 8px 18px;
     border: none;
 }}
 QTableWidget::item:selected {{
@@ -417,6 +421,7 @@ class VRCChatboxGUI(QMainWindow):
         self.config = load_app_config()
         self._bridge = _Bridge()
 
+        self.app.setStyle("Fusion")   # Fusion respects stylesheets; native Windows style ignores ::indicator etc.
         self.setWindowTitle("VRC Chatbox Settings")
         self.setFixedSize(1600, 900)
         self.app.setStyleSheet(STYLE)
@@ -694,6 +699,37 @@ class VRCChatboxGUI(QMainWindow):
 
         og.addWidget(_hline())
 
+        og.addWidget(_label("Groups", "field_label"))
+
+        self.groups_table = QTableWidget(0, 2)
+        self.groups_table.setHorizontalHeaderLabels(["Group Name", "Shockers"])
+        gh = self.groups_table.horizontalHeader()
+        gh.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        gh.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.groups_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.groups_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.groups_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.groups_table.setAlternatingRowColors(True)
+        self.groups_table.setMinimumHeight(110)
+        self.groups_table.verticalHeader().setVisible(False)
+        og.addWidget(self.groups_table)
+
+        group_btns_row = QHBoxLayout()
+        group_btns_row.setSpacing(12)
+        self.add_group_btn = QPushButton("Add Group")
+        self.add_group_btn.clicked.connect(self.add_group)
+        self.edit_group_btn = QPushButton("Edit Selected")
+        self.edit_group_btn.clicked.connect(self.edit_group)
+        self.remove_group_btn = QPushButton("Remove Selected")
+        self.remove_group_btn.clicked.connect(self.remove_group)
+        group_btns_row.addWidget(self.add_group_btn)
+        group_btns_row.addWidget(self.edit_group_btn)
+        group_btns_row.addWidget(self.remove_group_btn)
+        group_btns_row.addStretch()
+        og.addLayout(group_btns_row)
+
+        og.addWidget(_hline())
+
         test_row = QHBoxLayout()
         test_row.setSpacing(12)
         self.test_leftleg_button = QPushButton("Test Left")
@@ -721,6 +757,8 @@ class VRCChatboxGUI(QMainWindow):
         self.hold_time_spinbox.valueChanged.connect(self.on_shock_settings_change)
 
         self._convert_legacy_shocker_config()
+        self._init_default_groups()
+        self.refresh_groups_display()
         self.refresh_shockers_display()
         self.on_mode_change()
 
@@ -1036,7 +1074,8 @@ class VRCChatboxGUI(QMainWindow):
 
     def add_shocker(self):
         dlg = ShockerEditDialog(self, mode="add",
-                                discovered=getattr(self, 'discovered_shockers', {}))
+                                discovered=getattr(self, 'discovered_shockers', {}),
+                                groups=self.config.get("shockosc", {}).get("groups", []))
         if dlg.exec() == QDialog.DialogCode.Accepted:
             data = dlg.get_data()
             sid = data["id"]
@@ -1064,7 +1103,7 @@ class VRCChatboxGUI(QMainWindow):
         dlg = ShockerEditDialog(self, mode="edit", current={
             "name": info.get("name", f"Shocker {sid[:8]}…"),
             "group": info.get("group", ""),
-        })
+        }, groups=self.config.get("shockosc", {}).get("groups", []))
         if dlg.exec() == QDialog.DialogCode.Accepted:
             data = dlg.get_data()
             self.config["shockosc"].setdefault("shockers", {})[sid] = {
@@ -1094,6 +1133,94 @@ class VRCChatboxGUI(QMainWindow):
                 self.messenger.update_shock_config(self.config["shockosc"])
             self.refresh_shockers_display()
             self._set_status("Shocker removed")
+
+    # ── Group management ───────────────────────────────────────────────────
+
+    def _init_default_groups(self):
+        sc = self.config.setdefault("shockosc", {})
+        if "groups" not in sc:
+            sc["groups"] = ["leftleg", "rightleg"]
+            save_app_config(self.config)
+
+    def refresh_groups_display(self):
+        self.groups_table.setRowCount(0)
+        shockers = self.config.get("shockosc", {}).get("shockers", {})
+        for group_name in self.config.get("shockosc", {}).get("groups", []):
+            count = sum(
+                1 for info in shockers.values()
+                if (isinstance(info, dict) and info.get("group") == group_name)
+                or (isinstance(info, str) and info == group_name)
+            )
+            r = self.groups_table.rowCount()
+            self.groups_table.insertRow(r)
+            self.groups_table.setItem(r, 0, QTableWidgetItem(group_name))
+            self.groups_table.setItem(r, 1, QTableWidgetItem(str(count)))
+
+    def add_group(self):
+        name, ok = QInputDialog.getText(self, "Add Group", "Group name:")
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+        groups = self.config.setdefault("shockosc", {}).setdefault("groups", [])
+        if name in groups:
+            QMessageBox.warning(self, "Duplicate", f'Group "{name}" already exists.')
+            return
+        groups.append(name)
+        save_app_config(self.config)
+        self.refresh_groups_display()
+        self._set_status(f'Group "{name}" added')
+
+    def edit_group(self):
+        row = self.groups_table.currentRow()
+        if row < 0:
+            QMessageBox.warning(self, "No Selection", "Select a group first."); return
+        old_name = self.groups_table.item(row, 0).text()
+        name, ok = QInputDialog.getText(self, "Edit Group", "Group name:", text=old_name)
+        if not ok or not name.strip() or name.strip() == old_name:
+            return
+        name = name.strip()
+        groups = self.config.get("shockosc", {}).get("groups", [])
+        if name in groups:
+            QMessageBox.warning(self, "Duplicate", f'Group "{name}" already exists.')
+            return
+        groups[groups.index(old_name)] = name
+        for info in self.config.get("shockosc", {}).get("shockers", {}).values():
+            if isinstance(info, dict) and info.get("group") == old_name:
+                info["group"] = name
+        save_app_config(self.config)
+        if self.messenger and hasattr(self.messenger, 'update_shock_config'):
+            self.messenger.update_shock_config(self.config["shockosc"])
+        self.refresh_groups_display()
+        self.refresh_shockers_display()
+        self._set_status(f'Group renamed to "{name}"')
+
+    def remove_group(self):
+        row = self.groups_table.currentRow()
+        if row < 0:
+            QMessageBox.warning(self, "No Selection", "Select a group first."); return
+        name = self.groups_table.item(row, 0).text()
+        count = sum(
+            1 for info in self.config.get("shockosc", {}).get("shockers", {}).values()
+            if (isinstance(info, dict) and info.get("group") == name)
+            or (isinstance(info, str) and info == name)
+        )
+        msg = f'Remove group "{name}"?'
+        if count > 0:
+            msg += f"\n\n{count} shocker(s) in this group will have their group cleared."
+        if QMessageBox.question(self, "Confirm", msg,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        ) != QMessageBox.StandardButton.Yes: return
+        groups = self.config.get("shockosc", {}).get("groups", [])
+        groups.remove(name)
+        for info in self.config.get("shockosc", {}).get("shockers", {}).values():
+            if isinstance(info, dict) and info.get("group") == name:
+                info["group"] = ""
+        save_app_config(self.config)
+        if self.messenger and hasattr(self.messenger, 'update_shock_config'):
+            self.messenger.update_shock_config(self.config["shockosc"])
+        self.refresh_groups_display()
+        self.refresh_shockers_display()
+        self._set_status(f'Group "{name}" removed')
 
     def test_leftleg(self):
         if not self.messenger or not hasattr(self.messenger, 'shock_controller'): return
@@ -1208,15 +1335,17 @@ class VRCChatboxGUI(QMainWindow):
 # ── Dialogs ───────────────────────────────────────────────────────────────────
 
 class ShockerEditDialog(QDialog):
-    def __init__(self, parent, mode="add", current=None, discovered=None):
+    def __init__(self, parent, mode="add", current=None, discovered=None, groups=None):
         """
         mode="add"  — fields: Shocker (dropdown or manual ID), Name, Group
         mode="edit" — fields: Name, Group
         discovered  — dict {id: {name, device_name, ...}} from Discover Shockers
+        groups      — list of group name strings from config
         """
         super().__init__(parent)
         self.mode = mode
         self._discovered = discovered or {}
+        self._groups = groups or []
         self.setWindowTitle("Add Shocker" if mode == "add" else "Edit Shocker")
         self.setFixedSize(420, 280 if mode == "add" else 220)
         self.setModal(True)
@@ -1257,11 +1386,20 @@ class ShockerEditDialog(QDialog):
         next_row += 1
 
         grid.addWidget(_label("Group", "field_label"), next_row, 0)
-        self.group_edit = QLineEdit()
-        self.group_edit.setPlaceholderText("e.g. leftleg")
+        self.group_combo = QComboBox()
+        self.group_combo.setEditable(True)
+        self.group_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.group_combo.setPlaceholderText("Select or type a group…")
+        for g in self._groups:
+            self.group_combo.addItem(g)
         if current:
-            self.group_edit.setText(current.get("group", ""))
-        grid.addWidget(self.group_edit, next_row, 1)
+            g = current.get("group", "")
+            idx = self.group_combo.findText(g)
+            if idx >= 0:
+                self.group_combo.setCurrentIndex(idx)
+            else:
+                self.group_combo.setCurrentText(g)
+        grid.addWidget(self.group_combo, next_row, 1)
 
         layout.addLayout(grid)
         layout.addStretch()
@@ -1298,7 +1436,7 @@ class ShockerEditDialog(QDialog):
         return {
             "name": self.name_edit.text().strip(),
             "id": selected_id,
-            "group": self.group_edit.text().strip(),
+            "group": self.group_combo.currentText().strip(),
         }
 
 
