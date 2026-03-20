@@ -566,7 +566,7 @@ def main():
             print("Opening settings GUI...")
             show_settings_gui(vrc)
         except ImportError:
-            print("GUI not available (tkinter not installed)")
+            print("GUI not available (PyQt6 not installed). Run: pip install PyQt6")
         return
 
     try:

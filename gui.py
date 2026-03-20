@@ -1,1230 +1,1332 @@
-import tkinter as tk
-from tkinter import ttk, messagebox
-from config import load_app_config, save_app_config
-import requests
+import sys
 import threading
+import requests
+
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QStackedWidget, QVBoxLayout,
+    QHBoxLayout, QGridLayout, QGroupBox, QLabel, QPushButton, QCheckBox,
+    QRadioButton, QSpinBox, QDoubleSpinBox, QAbstractSpinBox, QLineEdit,
+    QComboBox, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
+    QDialog, QDialogButtonBox, QAbstractItemView, QButtonGroup, QFrame,
+    QSizePolicy, QScrollArea,
+)
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject
+from PyQt6.QtGui import QFont
+
+from config import load_app_config, save_app_config
+
+# ── Palette ───────────────────────────────────────────────────────────────────
+# Inline SVG arrow for combobox (border-trick doesn't work in Qt)
+_ARROW_SVG = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'><polygon points='0,0 10,0 5,6' fill='%23CAC4D0'/></svg>"
+
+BG       = "#1C1B1F"   # main background
+SURFACE  = "#2B2930"   # cards / sidebar
+SURFACE2 = "#37333E"   # elevated cards inside cards
+PRIMARY  = "#D0BCFF"   # purple accent
+PRIM_CON = "#4F378B"   # primary container (selection)
+ON_SURF  = "#E6E1E5"   # primary text
+ON_VAR   = "#CAC4D0"   # secondary text
+OUTLINE  = "#938F99"   # input borders
+OUT_VAR  = "#49454F"   # subtle borders
+POSITIVE = "#A8D5A2"   # status/success green
+
+STYLE = f"""
+QMainWindow, QDialog {{
+    background-color: {BG};
+}}
+QWidget {{
+    background-color: {BG};
+    color: {ON_SURF};
+    font-family: 'Segoe UI', 'Roboto', Arial, sans-serif;
+    font-size: 10pt;
+}}
+
+/* ── Sidebar ── */
+QWidget#sidebar {{
+    background-color: {SURFACE};
+    border-right: 1px solid {OUT_VAR};
+}}
+
+/* ── Content pages ── */
+QStackedWidget, QStackedWidget > QWidget {{
+    background-color: {BG};
+}}
+
+/* ── Group/card boxes ── */
+QGroupBox {{
+    background-color: {SURFACE};
+    border: 1px solid {OUT_VAR};
+    border-radius: 12px;
+    margin-top: 16px;
+    padding: 14px 16px 14px 16px;
+    font-weight: bold;
+    font-size: 10pt;
+    color: {PRIMARY};
+}}
+QGroupBox::title {{
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 14px;
+    padding: 0 6px;
+    background-color: {SURFACE};
+}}
+
+/* ── Buttons ── */
+QPushButton {{
+    background-color: {SURFACE2};
+    color: {ON_SURF};
+    border: none;
+    border-radius: 20px;
+    padding: 8px 20px;
+    min-width: 72px;
+    font-weight: 500;
+    font-size: 10pt;
+}}
+QPushButton:hover {{
+    background-color: #4A4458;
+}}
+QPushButton:pressed {{
+    background-color: {PRIMARY};
+    color: {BG};
+}}
+QPushButton:disabled {{
+    background-color: {SURFACE};
+    color: {OUT_VAR};
+}}
+
+/* Stepper ± buttons — square, no pill radius */
+QPushButton#stepper_btn {{
+    background-color: {SURFACE2};
+    color: {PRIMARY};
+    border: 1px solid {OUT_VAR};
+    border-radius: 6px;
+    padding: 0;
+    min-width: 32px;
+    max-width: 32px;
+    min-height: 32px;
+    max-height: 32px;
+    font-size: 16pt;
+    font-weight: bold;
+}}
+QPushButton#stepper_btn:hover {{
+    background-color: #4A4458;
+    border-color: {PRIMARY};
+}}
+QPushButton#stepper_btn:pressed {{
+    background-color: {PRIMARY};
+    color: {BG};
+}}
+
+/* Nav rail buttons — use :checked so no setStyleSheet() in click handlers */
+QPushButton#nav_btn {{
+    background-color: transparent;
+    color: {ON_VAR};
+    border: none;
+    border-left: 3px solid transparent;
+    border-radius: 0;
+    padding: 16px 28px;
+    min-width: 0;
+    min-height: 48px;
+    text-align: left;
+    font-size: 10pt;
+}}
+QPushButton#nav_btn:hover {{
+    background-color: rgba(208, 188, 255, 0.08);
+    color: {ON_SURF};
+    border-left: 3px solid transparent;
+}}
+QPushButton#nav_btn:checked {{
+    background-color: rgba(79, 55, 139, 0.35);
+    color: {PRIMARY};
+    border-left: 3px solid {PRIMARY};
+    font-weight: bold;
+}}
+
+/* ── Inputs ── */
+QLineEdit, QComboBox {{
+    background-color: {SURFACE};
+    color: {ON_SURF};
+    border: 1px solid {OUTLINE};
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 10pt;
+    selection-background-color: {PRIM_CON};
+    selection-color: {ON_SURF};
+    min-height: 20px;
+}}
+QLineEdit:focus, QComboBox:focus {{
+    border: 2px solid {PRIMARY};
+    padding: 7px 11px;
+}}
+QLineEdit:hover, QComboBox:hover {{
+    border-color: {ON_VAR};
+}}
+
+/* Stepper's internal QSpinBox — borderless, transparent */
+QSpinBox, QDoubleSpinBox {{
+    background-color: {SURFACE};
+    color: {ON_SURF};
+    border: 1px solid {OUTLINE};
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 10pt;
+    min-height: 20px;
+    selection-background-color: {PRIM_CON};
+}}
+QSpinBox:focus, QDoubleSpinBox:focus {{
+    border: 2px solid {PRIMARY};
+}}
+/* Hide native buttons — we use our own */
+QSpinBox::up-button, QSpinBox::down-button,
+QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{
+    width: 0; height: 0; border: none;
+}}
+
+/* ── Combo ── */
+QComboBox::drop-down {{
+    subcontrol-origin: border;
+    subcontrol-position: top right;
+    width: 28px;
+    background-color: {SURFACE2};
+    border-left: 1px solid {OUT_VAR};
+    border-top-right-radius: 8px;
+    border-bottom-right-radius: 8px;
+}}
+QComboBox::down-arrow {{
+    image: url({_ARROW_SVG});
+    width: 10px;
+    height: 6px;
+}}
+QComboBox QAbstractItemView {{
+    background-color: {SURFACE};
+    color: {ON_SURF};
+    border: 1px solid {OUT_VAR};
+    border-radius: 8px;
+    selection-background-color: {SURFACE2};
+    outline: none;
+    padding: 4px;
+}}
+
+/* ── Checkboxes & radios ── */
+QCheckBox, QRadioButton {{
+    color: {ON_SURF};
+    spacing: 10px;
+    font-size: 10pt;
+}}
+QCheckBox::indicator {{
+    width: 18px; height: 18px;
+    border: 2px solid {OUTLINE};
+    border-radius: 4px;
+    background-color: transparent;
+}}
+QCheckBox::indicator:hover {{ border-color: {PRIMARY}; }}
+QCheckBox::indicator:checked {{
+    background-color: {PRIMARY};
+    border-color: {PRIMARY};
+}}
+QRadioButton::indicator {{
+    width: 18px; height: 18px;
+    border: 2px solid {OUTLINE};
+    border-radius: 9px;
+    background-color: transparent;
+}}
+QRadioButton::indicator:hover {{ border-color: {PRIMARY}; }}
+QRadioButton::indicator:checked {{
+    background-color: {PRIMARY};
+    border-color: {PRIMARY};
+}}
+
+/* ── Table ── */
+QTableWidget {{
+    background-color: {SURFACE};
+    color: {ON_SURF};
+    border: 1px solid {OUT_VAR};
+    border-radius: 10px;
+    gridline-color: {OUT_VAR};
+    alternate-background-color: {SURFACE2};
+    font-size: 10pt;
+}}
+QTableWidget::item {{
+    padding: 8px 12px;
+    border: none;
+}}
+QTableWidget::item:selected {{
+    background-color: {PRIM_CON};
+    color: {ON_SURF};
+}}
+QHeaderView::section {{
+    background-color: {SURFACE2};
+    color: {PRIMARY};
+    border: none;
+    border-right: 1px solid {OUT_VAR};
+    border-bottom: 1px solid {OUT_VAR};
+    padding: 8px 12px;
+    font-weight: bold;
+    font-size: 10pt;
+}}
+
+/* ── Scrollbars ── */
+QScrollBar:vertical {{
+    background: transparent;
+    width: 8px;
+}}
+QScrollBar::handle:vertical {{
+    background: {OUT_VAR};
+    border-radius: 4px;
+    min-height: 30px;
+}}
+QScrollBar::handle:vertical:hover {{
+    background: {OUTLINE};
+}}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+    background: none; height: 0;
+}}
+
+/* ── Labels ── */
+QLabel {{
+    background-color: transparent;
+    color: {ON_SURF};
+}}
+QLabel#section_title {{
+    color: {PRIMARY};
+    font-size: 18pt;
+    font-weight: bold;
+}}
+QLabel#field_label {{
+    color: {ON_VAR};
+    font-size: 9pt;
+}}
+QLabel#status_lbl {{
+    color: {POSITIVE};
+    font-size: 9pt;
+}}
+
+/* ── Message boxes ── */
+QMessageBox {{
+    background-color: {SURFACE};
+}}
+QMessageBox QLabel {{
+    color: {ON_SURF};
+}}
+
+/* ── Dialogs ── */
+QDialog {{
+    background-color: {SURFACE};
+}}
+QDialog QWidget {{
+    background-color: {SURFACE};
+}}
+QDialog QGroupBox {{
+    background-color: {SURFACE2};
+}}
+"""
 
 
-class VRCChatboxGUI:
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+class _Bridge(QObject):
+    _call = pyqtSignal(object)
+    def __init__(self):
+        super().__init__()
+        self._call.connect(lambda fn: fn(), Qt.ConnectionType.QueuedConnection)
+    def run_in_main(self, fn):
+        self._call.emit(fn)
+
+
+def _label(text, obj_name=None):
+    lbl = QLabel(text)
+    if obj_name:
+        lbl.setObjectName(obj_name)
+    return lbl
+
+
+def _hline():
+    line = QFrame()
+    line.setFrameShape(QFrame.Shape.HLine)
+    line.setStyleSheet(f"color: {OUT_VAR}; background-color: {OUT_VAR}; max-height: 1px;")
+    return line
+
+
+class Stepper(QWidget):
+    """
+    Reliable number input: [−] [spinbox] [+]
+    Exposes the same value()/setValue()/valueChanged interface as QSpinBox.
+    """
+    valueChanged = pyqtSignal(object)
+
+    def __init__(self, min_val, max_val, step=1, value=0, decimals=0,
+                 spin_width=90, parent=None):
+        super().__init__(parent)
+        self._decimals = decimals
+
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+
+        self._minus = QPushButton("−")
+        self._minus.setObjectName("stepper_btn")
+        self._minus.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+        if decimals == 0:
+            self._spin = QSpinBox()
+            self._spin.setRange(int(min_val), int(max_val))
+            self._spin.setSingleStep(int(step))
+            self._spin.setValue(int(value))
+        else:
+            self._spin = QDoubleSpinBox()
+            self._spin.setRange(float(min_val), float(max_val))
+            self._spin.setSingleStep(float(step))
+            self._spin.setDecimals(decimals)
+            self._spin.setValue(float(value))
+
+        self._spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self._spin.setFixedWidth(spin_width)
+        self._spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self._plus = QPushButton("+")
+        self._plus.setObjectName("stepper_btn")
+        self._plus.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+        self._minus.clicked.connect(self._spin.stepDown)
+        self._plus.clicked.connect(self._spin.stepUp)
+        self._spin.valueChanged.connect(self.valueChanged.emit)
+
+        row.addWidget(self._minus)
+        row.addWidget(self._spin)
+        row.addWidget(self._plus)
+
+    def value(self):
+        return self._spin.value()
+
+    def setValue(self, v):
+        self._spin.setValue(v)
+
+    def setRange(self, mn, mx):
+        self._spin.setRange(mn, mx)
+
+
+# ── Main window ───────────────────────────────────────────────────────────────
+
+class VRCChatboxGUI(QMainWindow):
     def __init__(self, messenger=None):
+        self.app = QApplication.instance() or QApplication(sys.argv)
+        super().__init__()
         self.messenger = messenger
         self.config = load_app_config()
-        
-        # Create main window
-        self.root = tk.Tk()
-        self.root.title("VRC Chatbox Settings")
-        self.root.geometry("600x650")
-        self.root.resizable(False, False)
-        
-        # Center the window
-        self.center_window()
-        
-        self.setup_ui()
-        
-    def center_window(self):
-        """Center the window on screen"""
-        self.root.update_idletasks()
-        width = self.root.winfo_width()
-        height = self.root.winfo_height()
-        x = (self.root.winfo_screenwidth() // 2) - (width // 2)
-        y = (self.root.winfo_screenheight() // 2) - (height // 2)
-        self.root.geometry(f'{width}x{height}+{x}+{y}')
-        
-    def setup_ui(self):
-        """Setup the UI elements"""
-        # Create notebook for tabs
-        notebook = ttk.Notebook(self.root)
-        notebook.pack(fill='both', expand=True, padx=8, pady=8)
+        self._bridge = _Bridge()
 
-        # General settings tab
-        general_frame = ttk.Frame(notebook, padding="8")
-        notebook.add(general_frame, text="General")
+        self.setWindowTitle("VRC Chatbox Settings")
+        self.setFixedSize(1280, 760)
+        self.app.setStyleSheet(STYLE)
+        self._center_window()
+        self._setup_ui()
 
-        # Music toggle
-        self.show_music_var = tk.BooleanVar(value=self.config.get("show_music", True))
-        music_checkbox = ttk.Checkbutton(
-            general_frame,
-            text="Show Music Info",
-            variable=self.show_music_var,
-            command=self.on_music_toggle
+    def _center_window(self):
+        screen = self.app.primaryScreen().geometry()
+        self.move((screen.width() - self.width()) // 2,
+                  (screen.height() - self.height()) // 2)
+
+    # ── Shell ──────────────────────────────────────────────────────────────
+
+    def _setup_ui(self):
+        root = QWidget()
+        self.setCentralWidget(root)
+        outer = QVBoxLayout(root)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # Main row: sidebar + content
+        main_row = QHBoxLayout()
+        main_row.setContentsMargins(0, 0, 0, 0)
+        main_row.setSpacing(0)
+        outer.addLayout(main_row, stretch=1)
+
+        # Sidebar
+        sidebar = QWidget()
+        sidebar.setObjectName("sidebar")
+        sidebar.setFixedWidth(220)
+        sb_layout = QVBoxLayout(sidebar)
+        sb_layout.setContentsMargins(0, 0, 0, 0)
+        sb_layout.setSpacing(0)
+
+        app_title = QLabel("VRC Chatbox")
+        app_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        app_title.setStyleSheet(
+            f"color:{PRIMARY};font-size:13pt;font-weight:bold;"
+            f"padding:24px 16px 20px 16px;background:{SURFACE};"
         )
-        music_checkbox.grid(row=0, column=0, columnspan=2, sticky=tk.W, pady=3)
+        sb_layout.addWidget(app_title)
+        sb_layout.addWidget(_hline())
 
-        # ShockOSC tab
-        shock_frame = ttk.Frame(notebook, padding="8")
-        notebook.add(shock_frame, text="ShockOSC")
-        self.setup_shockosc_ui(shock_frame)
+        self._nav_btns = []
+        self._stack = QStackedWidget()
+        self._nav_group = QButtonGroup(self)
+        self._nav_group.setExclusive(True)
 
-        # Slide tab
-        slide_frame = ttk.Frame(notebook, padding="8")
-        notebook.add(slide_frame, text="Slide")
-        self.setup_slide_ui(slide_frame)
+        pages = [
+            ("  General",  self._build_general_page()),
+            ("  ShockOSC", self._build_shockosc_page()),
+            ("  Slide",    self._build_slide_page()),
+        ]
+        for i, (label, page) in enumerate(pages):
+            btn = QPushButton(label)
+            btn.setObjectName("nav_btn")
+            btn.setCheckable(True)
+            btn.setChecked(i == 0)
+            btn.clicked.connect(lambda _, idx=i: self._nav_to(idx))
+            self._nav_group.addButton(btn)
+            sb_layout.addWidget(btn)
+            self._nav_btns.append(btn)
+            self._stack.addWidget(page)
 
-        # Status label (bottom of main window)
-        self.status_label = ttk.Label(self.root, text="", foreground="green")
-        self.status_label.pack(pady=5)
-        
-        # Close button
-        close_button = ttk.Button(self.root, text="Close", command=self.root.destroy)
-        close_button.pack(pady=10)
-        
-    def setup_shockosc_ui(self, parent):
-        """Setup ShockOSC settings UI"""
-        shock_config = self.config.get("shockosc", {})
-        
-        # Enable/Disable checkbox
-        self.shock_enabled_var = tk.BooleanVar(value=shock_config.get("enabled", False))
-        enabled_checkbox = ttk.Checkbutton(
-            parent,
-            text="Enable ShockOSC",
-            variable=self.shock_enabled_var,
-            command=self.on_shock_settings_change
-        )
-        enabled_checkbox.grid(row=0, column=0, columnspan=3, sticky=tk.W, pady=(0, 5))
-        
-        # Show shock info toggle
-        self.shock_show_info_var = tk.BooleanVar(value=shock_config.get("show_shock_info", True))
-        show_info_checkbox = ttk.Checkbutton(
-            parent,
-            text="Show shock info in chatbox",
-            variable=self.shock_show_info_var,
-            command=self.on_shock_settings_change
-        )
-        show_info_checkbox.grid(row=1, column=0, columnspan=3, sticky=tk.W, pady=(0, 5))
+        sb_layout.addStretch()
+        main_row.addWidget(sidebar)
+        main_row.addWidget(self._stack, stretch=1)
 
-        # Show internet shocks toggle
-        self.shock_show_internet_var = tk.BooleanVar(value=shock_config.get("show_internet_shocks", True))
-        show_internet_checkbox = ttk.Checkbutton(
-            parent,
-            text="Show internet shocks in chatbox",
-            variable=self.shock_show_internet_var,
-            command=self.on_shock_settings_change
-        )
-        show_internet_checkbox.grid(row=2, column=0, columnspan=3, sticky=tk.W, pady=(0, 5))
+        # Bottom bar
+        bottom = QWidget()
+        bottom.setStyleSheet(f"background-color:{SURFACE};border-top:1px solid {OUT_VAR};")
+        bottom.setFixedHeight(52)
+        bot_row = QHBoxLayout(bottom)
+        bot_row.setContentsMargins(24, 0, 24, 0)
 
-        # Mode selection
-        ttk.Label(parent, text="Mode:").grid(row=3, column=0, sticky=tk.W, pady=3)
-        self.shock_mode_var = tk.StringVar(value=shock_config.get("mode", "static"))
-        mode_frame = ttk.Frame(parent)
-        mode_frame.grid(row=3, column=1, columnspan=2, sticky=tk.W, pady=3)
-        
-        static_radio = ttk.Radiobutton(mode_frame, text="Static", variable=self.shock_mode_var, 
-                                     value="static", command=self.on_mode_change)
-        static_radio.grid(row=0, column=0, padx=(0, 10))
-        
-        random_radio = ttk.Radiobutton(mode_frame, text="Random", variable=self.shock_mode_var,
-                                     value="random", command=self.on_mode_change)
-        random_radio.grid(row=0, column=1)
-        
-        # Combined settings frame
-        settings_frame = ttk.LabelFrame(parent, text="Shock Settings", padding="5")
-        settings_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
+        self.status_label = QLabel("")
+        self.status_label.setObjectName("status_lbl")
+        bot_row.addWidget(self.status_label)
+        bot_row.addStretch()
 
-        # Row 1: Intensity settings
-        self.static_label = ttk.Label(settings_frame, text="Intensity (%):")
-        self.static_label.grid(row=0, column=0, sticky=tk.W, padx=(0, 5))
+        close_btn = QPushButton("Close")
+        close_btn.setFixedWidth(100)
+        close_btn.clicked.connect(self.close)
+        bot_row.addWidget(close_btn)
 
-        self.static_intensity_var = tk.IntVar(value=shock_config.get("static_intensity", 50))
-        self.static_spinbox = ttk.Spinbox(settings_frame, from_=0, to=100, width=8,
-                                         textvariable=self.static_intensity_var, command=self.on_shock_settings_change)
-        self.static_spinbox.grid(row=0, column=1, sticky=tk.W, padx=(0, 20))
-        self.static_spinbox.bind('<KeyRelease>', self.on_shock_settings_change)
+        outer.addWidget(bottom)
 
-        self.random_min_label = ttk.Label(settings_frame, text="Min (%):")
-        self.random_min_label.grid(row=0, column=0, sticky=tk.W, padx=(0, 5))
+    def _nav_to(self, index):
+        self._stack.setCurrentIndex(index)
+        self._nav_btns[index].setChecked(True)
 
-        self.random_min_var = tk.IntVar(value=shock_config.get("random_min", 20))
-        self.random_min_spinbox = ttk.Spinbox(settings_frame, from_=0, to=100, width=6,
-                                            textvariable=self.random_min_var, command=self.on_shock_settings_change)
-        self.random_min_spinbox.grid(row=0, column=1, sticky=tk.W, padx=(0, 5))
-        self.random_min_spinbox.bind('<KeyRelease>', self.on_shock_settings_change)
+    def _set_status(self, text, ms=2500):
+        self.status_label.setText(text)
+        QTimer.singleShot(ms, lambda: self.status_label.setText(""))
 
-        self.random_max_label = ttk.Label(settings_frame, text="Max (%):")
-        self.random_max_label.grid(row=0, column=2, sticky=tk.W, padx=(0, 5))
+    # ── General page ───────────────────────────────────────────────────────
 
-        self.random_max_var = tk.IntVar(value=shock_config.get("random_max", 80))
-        self.random_max_spinbox = ttk.Spinbox(settings_frame, from_=0, to=100, width=6,
-                                            textvariable=self.random_max_var, command=self.on_shock_settings_change)
-        self.random_max_spinbox.grid(row=0, column=3, sticky=tk.W, padx=(0, 20))
-        self.random_max_spinbox.bind('<KeyRelease>', self.on_shock_settings_change)
+    def _build_general_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setSpacing(24)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        # Row 2: Duration, Cooldown, Hold Time
-        ttk.Label(settings_frame, text="Duration (s):").grid(row=1, column=0, sticky=tk.W, pady=(8, 0), padx=(0, 5))
-        self.duration_var = tk.DoubleVar(value=shock_config.get("duration", 1.0))
-        duration_spinbox = ttk.Spinbox(settings_frame, from_=0.3, to=30.0, increment=0.1, width=6,
-                                     textvariable=self.duration_var, command=self.on_shock_settings_change)
-        duration_spinbox.grid(row=1, column=1, sticky=tk.W, pady=(8, 0), padx=(0, 5))
-        duration_spinbox.bind('<KeyRelease>', self.on_shock_settings_change)
+        layout.addWidget(_label("General", "section_title"))
+        layout.addWidget(_hline())
 
-        ttk.Label(settings_frame, text="Cooldown (s):").grid(row=1, column=2, sticky=tk.W, pady=(8, 0), padx=(0, 5))
-        self.cooldown_var = tk.DoubleVar(value=shock_config.get("cooldown_delay", 5.0))
-        cooldown_spinbox = ttk.Spinbox(settings_frame, from_=0.0, to=60.0, increment=0.1, width=6,
-                                     textvariable=self.cooldown_var, command=self.on_shock_settings_change)
-        cooldown_spinbox.grid(row=1, column=3, sticky=tk.W, pady=(8, 0), padx=(0, 20))
-        cooldown_spinbox.bind('<KeyRelease>', self.on_shock_settings_change)
+        card = QGroupBox("Display")
+        card_layout = QVBoxLayout(card)
+        card_layout.setSpacing(16)
 
-        ttk.Label(settings_frame, text="Hold (s):").grid(row=1, column=4, sticky=tk.W, pady=(8, 0), padx=(0, 5))
-        self.hold_time_var = tk.DoubleVar(value=shock_config.get("hold_time", 0.5))
-        hold_time_spinbox = ttk.Spinbox(settings_frame, from_=0.0, to=5.0, increment=0.1, width=6,
-                                      textvariable=self.hold_time_var, command=self.on_shock_settings_change)
-        hold_time_spinbox.grid(row=1, column=5, sticky=tk.W, pady=(8, 0))
-        hold_time_spinbox.bind('<KeyRelease>', self.on_shock_settings_change)
+        self.show_music_cb = QCheckBox("Show Music Info in chatbox")
+        self.show_music_cb.setChecked(self.config.get("show_music", True))
+        self.show_music_cb.toggled.connect(self.on_music_toggle)
+        card_layout.addWidget(self.show_music_cb)
 
-        # Create lists for easy mode switching
-        self.static_widgets = [self.static_label, self.static_spinbox]
-        self.random_widgets = [self.random_min_label, self.random_min_spinbox, self.random_max_label, self.random_max_spinbox]
+        layout.addWidget(card)
+        layout.addStretch()
+        return page
 
-        # Keep references for backward compatibility
-        self.static_frame = settings_frame
-        self.random_frame = settings_frame
-        
-        # OpenShock settings
-        openshock_frame = ttk.LabelFrame(parent, text="OpenShock Integration", padding="5")
-        openshock_frame.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
-        
-        # API Token
-        ttk.Label(openshock_frame, text="API Token:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        self.token_var = tk.StringVar(value=shock_config.get("openshock_token", ""))
-        token_entry = ttk.Entry(openshock_frame, textvariable=self.token_var, show="*", width=40)
-        token_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=5)
-        token_entry.bind('<KeyRelease>', self.on_token_change)
-        
-        # Discover button
-        self.discover_button = ttk.Button(openshock_frame, text="Discover Shockers", 
-                                        command=self.discover_shockers)
-        self.discover_button.grid(row=1, column=0, columnspan=2, pady=5)
-        
-        # Shockers list
-        ttk.Label(openshock_frame, text="Shocker Assignments:").grid(row=2, column=0, columnspan=2, sticky=tk.W, pady=(10, 5))
-        
-        # Create treeview for shocker assignments
-        self.shockers_tree = ttk.Treeview(openshock_frame, columns=('Name', 'ID', 'Group'), show='headings', height=4)
-        self.shockers_tree.heading('Name', text='Shocker Name')
-        self.shockers_tree.heading('ID', text='ID')
-        self.shockers_tree.heading('Group', text='OSC Group')
-        self.shockers_tree.column('Name', width=150)
-        self.shockers_tree.column('ID', width=80)
-        self.shockers_tree.column('Group', width=100)
-        self.shockers_tree.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
-        
-        # Scrollbar for treeview
-        tree_scrollbar = ttk.Scrollbar(openshock_frame, orient=tk.VERTICAL, command=self.shockers_tree.yview)
-        tree_scrollbar.grid(row=3, column=2, sticky=(tk.N, tk.S), pady=5)
-        self.shockers_tree.configure(yscrollcommand=tree_scrollbar.set)
-        
-        # Group assignment frame
-        assign_frame = ttk.Frame(openshock_frame)
-        assign_frame.grid(row=4, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
-        
-        ttk.Label(assign_frame, text="Assign to group:").grid(row=0, column=0, padx=(0, 5))
-        self.group_var = tk.StringVar()
-        self.group_combo = ttk.Combobox(assign_frame, textvariable=self.group_var, 
-                                       values=['leftleg', 'rightleg'], state='readonly', width=15)
-        self.group_combo.grid(row=0, column=1, padx=5)
-        
-        self.assign_button = ttk.Button(assign_frame, text="Assign", command=self.assign_shocker)
-        self.assign_button.grid(row=0, column=2, padx=5)
-        
-        self.unassign_button = ttk.Button(assign_frame, text="Unassign", command=self.unassign_shocker)
-        self.unassign_button.grid(row=0, column=3, padx=5)
-        
-        # Test buttons frame
-        test_frame = ttk.Frame(openshock_frame)
-        test_frame.grid(row=5, column=0, columnspan=2, pady=10, sticky=(tk.W, tk.E))
+    # ── ShockOSC page ──────────────────────────────────────────────────────
 
-        # Test simulation buttons
-        self.test_leftleg_button = ttk.Button(test_frame, text="Test Left", command=self.test_leftleg)
-        self.test_leftleg_button.grid(row=0, column=0, padx=(0, 5))
+    def _build_shockosc_page(self):
+        sc = self.config.get("shockosc", {})
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setSpacing(20)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        self.test_rightleg_button = ttk.Button(test_frame, text="Test Right", command=self.test_rightleg)
-        self.test_rightleg_button.grid(row=0, column=1, padx=5)
-        
-        # Configure column weights for proper stretching
-        parent.columnconfigure(1, weight=1)
-        settings_frame.columnconfigure(1, weight=1)
-        openshock_frame.columnconfigure(1, weight=1)
-        
-        # Convert legacy shocker config format if needed
+        layout.addWidget(_label("ShockOSC", "section_title"))
+        layout.addWidget(_hline())
+
+        # ── Two-column body ──────────────────────────────────────────────
+        body = QHBoxLayout()
+        body.setSpacing(24)
+        layout.addLayout(body)
+
+        # ── Left column ──────────────────────────────────────────────────
+        left = QVBoxLayout()
+        left.setSpacing(20)
+        body.addLayout(left, stretch=1)
+
+        # Options card
+        opts_card = QGroupBox("Options")
+        opts_grid = QGridLayout(opts_card)
+        opts_grid.setSpacing(16)
+        opts_grid.setContentsMargins(20, 24, 20, 20)
+
+        self.shock_enabled_cb = QCheckBox("Enable ShockOSC")
+        self.shock_enabled_cb.setChecked(sc.get("enabled", False))
+        self.shock_show_info_cb = QCheckBox("Show shock info in chatbox")
+        self.shock_show_info_cb.setChecked(sc.get("show_shock_info", True))
+        self.shock_show_internet_cb = QCheckBox("Show internet shocks in chatbox")
+        self.shock_show_internet_cb.setChecked(sc.get("show_internet_shocks", True))
+
+        opts_grid.addWidget(self.shock_enabled_cb, 0, 0)
+        opts_grid.addWidget(self.shock_show_info_cb, 1, 0)
+        opts_grid.addWidget(self.shock_show_internet_cb, 2, 0)
+
+        # Mode
+        mode_row = QHBoxLayout()
+        mode_row.setSpacing(24)
+        mode_row.addWidget(_label("Mode:", "field_label"))
+        self._mode_group = QButtonGroup(self)
+        self.static_radio = QRadioButton("Static")
+        self.random_radio = QRadioButton("Random")
+        self._mode_group.addButton(self.static_radio)
+        self._mode_group.addButton(self.random_radio)
+        mode = sc.get("mode", "static")
+        self.static_radio.setChecked(mode == "static")
+        self.random_radio.setChecked(mode == "random")
+        mode_row.addWidget(self.static_radio)
+        mode_row.addWidget(self.random_radio)
+        mode_row.addStretch()
+        opts_grid.addLayout(mode_row, 3, 0)
+        left.addWidget(opts_card)
+
+        # Shock settings card
+        shock_card = QGroupBox("Shock Settings")
+        sg = QGridLayout(shock_card)
+        sg.setSpacing(16)
+        sg.setContentsMargins(20, 24, 20, 20)
+
+        # Static intensity container
+        self._static_container = QWidget()
+        sc_row = QHBoxLayout(self._static_container)
+        sc_row.setContentsMargins(0, 0, 0, 0)
+        sc_row.setSpacing(16)
+        sc_row.addWidget(_label("Intensity %", "field_label"))
+        self.static_spinbox = Stepper(0, 100, 1, sc.get("static_intensity", 50), spin_width=100)
+        sc_row.addWidget(self.static_spinbox)
+        sc_row.addStretch()
+
+        # Random min/max container
+        self._random_container = QWidget()
+        rc_row = QHBoxLayout(self._random_container)
+        rc_row.setContentsMargins(0, 0, 0, 0)
+        rc_row.setSpacing(16)
+        rc_row.addWidget(_label("Min %", "field_label"))
+        self.random_min_spinbox = Stepper(0, 100, 1, sc.get("random_min", 20), spin_width=100)
+        rc_row.addWidget(self.random_min_spinbox)
+        rc_row.addSpacing(20)
+        rc_row.addWidget(_label("Max %", "field_label"))
+        self.random_max_spinbox = Stepper(0, 100, 1, sc.get("random_max", 80), spin_width=100)
+        rc_row.addWidget(self.random_max_spinbox)
+        rc_row.addStretch()
+
+        # Use a stacked widget so only one row is visible at a time (avoids same-cell overlap)
+        self._mode_stack = QStackedWidget()
+        self._mode_stack.addWidget(self._static_container)   # index 0
+        self._mode_stack.addWidget(self._random_container)   # index 1
+        sg.addWidget(self._mode_stack, 0, 0, 1, 2)
+
+        # Duration / Cooldown / Hold
+        sg.addWidget(_label("Duration (s)", "field_label"), 1, 0)
+        self.duration_spinbox = Stepper(0.3, 30.0, 0.1, sc.get("duration", 1.0), decimals=1, spin_width=90)
+        sg.addWidget(self.duration_spinbox, 1, 1)
+
+        sg.addWidget(_label("Cooldown (s)", "field_label"), 2, 0)
+        self.cooldown_spinbox = Stepper(0.0, 60.0, 0.1, sc.get("cooldown_delay", 5.0), decimals=1, spin_width=90)
+        sg.addWidget(self.cooldown_spinbox, 2, 1)
+
+        sg.addWidget(_label("Hold Time (s)", "field_label"), 3, 0)
+        self.hold_time_spinbox = Stepper(0.0, 5.0, 0.1, sc.get("hold_time", 0.5), decimals=2, spin_width=90)
+        sg.addWidget(self.hold_time_spinbox, 3, 1)
+
+        left.addWidget(shock_card)
+        left.addStretch()
+
+
+        # ── Right column ─────────────────────────────────────────────────
+        right = QVBoxLayout()
+        right.setSpacing(20)
+        body.addLayout(right, stretch=1)
+
+        openshock_card = QGroupBox("OpenShock Integration")
+        og = QVBoxLayout(openshock_card)
+        og.setSpacing(16)
+        og.setContentsMargins(20, 24, 20, 20)
+
+        # API token row
+        token_row = QHBoxLayout()
+        token_row.setSpacing(12)
+        token_row.addWidget(_label("API Token", "field_label"))
+        self.token_entry = QLineEdit()
+        self.token_entry.setEchoMode(QLineEdit.EchoMode.Password)
+        self.token_entry.setText(sc.get("openshock_token", ""))
+        self.token_entry.textChanged.connect(self.on_token_change)
+        token_row.addWidget(self.token_entry, stretch=1)
+        og.addLayout(token_row)
+
+        self.discover_button = QPushButton("Discover Shockers")
+        self.discover_button.setFixedWidth(200)
+        self.discover_button.clicked.connect(self.discover_shockers)
+        og.addWidget(self.discover_button)
+
+        og.addWidget(_label("Shocker Assignments", "field_label"))
+
+        self.shockers_table = QTableWidget(0, 3)
+        self.shockers_table.setHorizontalHeaderLabels(["Name", "ID", "Group"])
+        hh = self.shockers_table.horizontalHeader()
+        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.shockers_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.shockers_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.shockers_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.shockers_table.setAlternatingRowColors(True)
+        self.shockers_table.setMinimumHeight(220)
+        self.shockers_table.verticalHeader().setVisible(False)
+        og.addWidget(self.shockers_table)
+
+        assign_row = QHBoxLayout()
+        assign_row.setSpacing(12)
+        assign_row.addWidget(_label("Assign to:", "field_label"))
+        self.group_combo = QComboBox()
+        self.group_combo.addItems(["leftleg", "rightleg"])
+        self.group_combo.setCurrentIndex(-1)
+        self.group_combo.setPlaceholderText("Select group…")
+        self.group_combo.setFixedWidth(180)
+        assign_row.addWidget(self.group_combo)
+        self.assign_button = QPushButton("Assign")
+        self.assign_button.clicked.connect(self.assign_shocker)
+        assign_row.addWidget(self.assign_button)
+        self.unassign_button = QPushButton("Unassign")
+        self.unassign_button.clicked.connect(self.unassign_shocker)
+        assign_row.addWidget(self.unassign_button)
+        assign_row.addStretch()
+        og.addLayout(assign_row)
+
+        og.addWidget(_hline())
+
+        test_row = QHBoxLayout()
+        test_row.setSpacing(12)
+        self.test_leftleg_button = QPushButton("Test Left")
+        self.test_leftleg_button.clicked.connect(self.test_leftleg)
+        self.test_rightleg_button = QPushButton("Test Right")
+        self.test_rightleg_button.clicked.connect(self.test_rightleg)
+        test_row.addWidget(self.test_leftleg_button)
+        test_row.addWidget(self.test_rightleg_button)
+        test_row.addStretch()
+        og.addLayout(test_row)
+
+        right.addWidget(openshock_card)
+        right.addStretch()
+
+        # Wire signals and init state
+        self.shock_enabled_cb.toggled.connect(self.on_shock_settings_change)
+        self.shock_show_info_cb.toggled.connect(self.on_shock_settings_change)
+        self.shock_show_internet_cb.toggled.connect(self.on_shock_settings_change)
+        self.static_radio.toggled.connect(self.on_mode_change)
+        self.static_spinbox.valueChanged.connect(self.on_shock_settings_change)
+        self.random_min_spinbox.valueChanged.connect(self.on_shock_settings_change)
+        self.random_max_spinbox.valueChanged.connect(self.on_shock_settings_change)
+        self.duration_spinbox.valueChanged.connect(self.on_shock_settings_change)
+        self.cooldown_spinbox.valueChanged.connect(self.on_shock_settings_change)
+        self.hold_time_spinbox.valueChanged.connect(self.on_shock_settings_change)
+
         self._convert_legacy_shocker_config()
-        
-        # Load existing shocker assignments
         self.refresh_shockers_display()
-        
-        # Initial mode setup
         self.on_mode_change()
-        
-    def on_mode_change(self):
-        """Handle mode change between static and random"""
-        mode = self.shock_mode_var.get()
-        if mode == "static":
-            # Show static widgets, hide random widgets
-            for widget in self.static_widgets:
-                widget.grid()
-            for widget in self.random_widgets:
-                widget.grid_remove()
-        else:
-            # Show random widgets, hide static widgets
-            for widget in self.static_widgets:
-                widget.grid_remove()
-            for widget in self.random_widgets:
-                widget.grid()
+
+        return page
+
+    # ── Slide page ─────────────────────────────────────────────────────────
+
+    def _build_slide_page(self):
+        sl = self.config.get("slide", {})
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setSpacing(20)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        layout.addWidget(_label("Slide", "section_title"))
+        layout.addWidget(_hline())
+
+        # Two-column header
+        header_row = QHBoxLayout()
+        header_row.setSpacing(24)
+        layout.addLayout(header_row)
+
+        # Left: enable + poll + intensity
+        left = QVBoxLayout()
+        left.setSpacing(20)
+        header_row.addLayout(left, stretch=1)
+
+        ctrl_card = QGroupBox("Controls")
+        cc = QGridLayout(ctrl_card)
+        cc.setSpacing(16)
+        cc.setContentsMargins(20, 24, 20, 20)
+
+        self.slide_enabled_cb = QCheckBox("Enable Slide Feature")
+        self.slide_enabled_cb.setChecked(sl.get("enabled", False))
+        self.slide_enabled_cb.toggled.connect(self.on_slide_settings_change)
+        cc.addWidget(self.slide_enabled_cb, 0, 0, 1, 2)
+
+        cc.addWidget(_label("Poll Interval (s)", "field_label"), 1, 0)
+        self.slide_poll_spinbox = Stepper(0.1, 10.0, 0.1, sl.get("poll_interval", 1.0), decimals=1, spin_width=90)
+        self.slide_poll_spinbox.valueChanged.connect(self.on_slide_settings_change)
+        cc.addWidget(self.slide_poll_spinbox, 1, 1)
+
+        left.addWidget(ctrl_card)
+
+        # Right: intensity range
+        right = QVBoxLayout()
+        right.setSpacing(20)
+        header_row.addLayout(right, stretch=1)
+
+        int_card = QGroupBox("Value-Based Intensity Range")
+        ic = QGridLayout(int_card)
+        ic.setSpacing(16)
+        ic.setContentsMargins(20, 24, 20, 20)
+
+        ic.addWidget(_label("Min Intensity %", "field_label"), 0, 0)
+        self.slide_min_spinbox = Stepper(0, 100, 5, sl.get("intensity_min", 30), spin_width=90)
+        self.slide_min_spinbox.valueChanged.connect(self.on_slide_settings_change)
+        ic.addWidget(self.slide_min_spinbox, 0, 1)
+
+        ic.addWidget(_label("Max Intensity %", "field_label"), 1, 0)
+        self.slide_max_spinbox = Stepper(0, 100, 5, sl.get("intensity_max", 70), spin_width=90)
+        self.slide_max_spinbox.valueChanged.connect(self.on_slide_settings_change)
+        ic.addWidget(self.slide_max_spinbox, 1, 1)
+
+        ic.addWidget(_label("Prob. Cooldown (s)", "field_label"), 2, 0)
+        self.slide_prob_cooldown_spinbox = Stepper(0.0, 60.0, 1.0, sl.get("probability_cooldown", 10.0), decimals=1, spin_width=90)
+        self.slide_prob_cooldown_spinbox.valueChanged.connect(self.on_slide_settings_change)
+        ic.addWidget(self.slide_prob_cooldown_spinbox, 2, 1)
+
+        right.addWidget(int_card)
+
+        # Variables section
+        vars_card = QGroupBox("OSC Variables")
+        vc = QVBoxLayout(vars_card)
+        vc.setSpacing(14)
+        vc.setContentsMargins(20, 24, 20, 20)
+
+        self.slide_vars_table = QTableWidget(0, 6)
+        self.slide_vars_table.setHorizontalHeaderLabels(
+            ["Name", "OSC Path", "Threshold", "Shockers", "Hold", "Enabled"])
+        vh = self.slide_vars_table.horizontalHeader()
+        vh.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        vh.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        vh.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        vh.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        vh.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        vh.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        self.slide_vars_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.slide_vars_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.slide_vars_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.slide_vars_table.setAlternatingRowColors(True)
+        self.slide_vars_table.setMinimumHeight(200)
+        vc.addWidget(self.slide_vars_table)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(12)
+        add_btn = QPushButton("Add Variable")
+        add_btn.clicked.connect(self.add_slide_variable)
+        edit_btn = QPushButton("Edit Selected")
+        edit_btn.clicked.connect(self.edit_slide_variable)
+        remove_btn = QPushButton("Remove Selected")
+        remove_btn.clicked.connect(self.remove_slide_variable)
+        btn_row.addWidget(add_btn)
+        btn_row.addWidget(edit_btn)
+        btn_row.addWidget(remove_btn)
+        btn_row.addStretch()
+        vc.addLayout(btn_row)
+
+        layout.addWidget(vars_card)
+        layout.addStretch()
+
+        self.refresh_slide_variables_display()
+        return page
+
+    # ── ShockOSC logic ─────────────────────────────────────────────────────
+
+    def on_mode_change(self, *_):
+        self._mode_stack.setCurrentIndex(0 if self.static_radio.isChecked() else 1)
         self.on_shock_settings_change()
-        
-    def on_shock_settings_change(self, *args):
-        """Handle any ShockOSC setting change"""
-        # No label updates needed for spinboxes
-        
-        # Ensure min <= max for random mode
-        if self.random_min_var.get() > self.random_max_var.get():
-            self.random_max_var.set(self.random_min_var.get())
-        
-        # Save settings
-        if not hasattr(self, 'config'):
-            return
-            
+
+    def on_shock_settings_change(self, *_):
+        if self.random_min_spinbox.value() > self.random_max_spinbox.value():
+            self.random_max_spinbox.setValue(self.random_min_spinbox.value())
         if "shockosc" not in self.config:
             self.config["shockosc"] = {}
-            
+        token = self.token_entry.text() if hasattr(self, 'token_entry') else \
+            self.config["shockosc"].get("openshock_token", "")
         self.config["shockosc"].update({
-            "enabled": self.shock_enabled_var.get(),
-            "mode": self.shock_mode_var.get(),
-            "static_intensity": int(self.static_intensity_var.get()),
-            "random_min": int(self.random_min_var.get()),
-            "random_max": int(self.random_max_var.get()),
-            "duration": round(self.duration_var.get(), 1),
-            "show_shock_info": self.shock_show_info_var.get(),
-            "show_internet_shocks": self.shock_show_internet_var.get(),
-            "cooldown_delay": round(self.cooldown_var.get(), 1),
-            "hold_time": round(self.hold_time_var.get(), 2),
-            "openshock_token": self.token_var.get() if hasattr(self, 'token_var') else self.config["shockosc"].get("openshock_token", ""),
-            "shockers": self.config["shockosc"].get("shockers", {}),
-            "openshock_url": self.config["shockosc"].get("openshock_url", "https://api.openshock.app")
+            "enabled":           self.shock_enabled_cb.isChecked(),
+            "mode":              "static" if self.static_radio.isChecked() else "random",
+            "static_intensity":  self.static_spinbox.value(),
+            "random_min":        self.random_min_spinbox.value(),
+            "random_max":        self.random_max_spinbox.value(),
+            "duration":          round(self.duration_spinbox.value(), 1),
+            "show_shock_info":   self.shock_show_info_cb.isChecked(),
+            "show_internet_shocks": self.shock_show_internet_cb.isChecked(),
+            "cooldown_delay":    round(self.cooldown_spinbox.value(), 1),
+            "hold_time":         round(self.hold_time_spinbox.value(), 2),
+            "openshock_token":   token,
+            "shockers":          self.config["shockosc"].get("shockers", {}),
+            "openshock_url":     self.config["shockosc"].get("openshock_url", "https://api.openshock.app"),
         })
-        
         save_app_config(self.config)
-        
-        # Update messenger if available
         if self.messenger and hasattr(self.messenger, 'update_shock_config'):
             self.messenger.update_shock_config(self.config["shockosc"])
-        
-        # Show status (only if status_label exists)
         if hasattr(self, 'status_label'):
-            status = "enabled" if self.config["shockosc"]["enabled"] else "disabled"
-            self.status_label.config(text=f"ShockOSC {status}")
-            self.root.after(2000, lambda: self.status_label.config(text=""))
-        
-    def on_music_toggle(self):
-        """Handle music toggle change"""
-        self.config["show_music"] = self.show_music_var.get()
+            s = "enabled" if self.config["shockosc"]["enabled"] else "disabled"
+            self._set_status(f"ShockOSC {s}")
+
+    def on_music_toggle(self, checked):
+        self.config["show_music"] = checked
         save_app_config(self.config)
-        
-        # Update messenger if available
         if self.messenger:
-            self.messenger.show_music = self.config["show_music"]
+            self.messenger.show_music = checked
             self.messenger.request_display_update()
-        
-        # Show status message
-        status = "enabled" if self.config["show_music"] else "disabled"
-        self.status_label.config(text=f"Music display {status}")
-        self.root.after(2000, lambda: self.status_label.config(text=""))
-        
-    def on_token_change(self, *args):
-        """Handle API token change"""
-        if not hasattr(self, 'config'):
-            return
+        self._set_status(f"Music display {'enabled' if checked else 'disabled'}")
+
+    def on_token_change(self, text):
         if "shockosc" not in self.config:
             self.config["shockosc"] = {}
-        
-        self.config["shockosc"]["openshock_token"] = self.token_var.get()
+        self.config["shockosc"]["openshock_token"] = text
         save_app_config(self.config)
-        
-        # Update messenger if available
         if self.messenger and hasattr(self.messenger, 'update_shock_config'):
             self.messenger.update_shock_config(self.config["shockosc"])
-    
+
     def discover_shockers(self):
-        """Discover available shockers from OpenShock API"""
-        token = self.token_var.get().strip()
+        token = self.token_entry.text().strip()
         if not token:
-            messagebox.showerror("Error", "Please enter your OpenShock API token first.")
+            QMessageBox.critical(self, "Error", "Please enter your OpenShock API token first.")
             return
-        
-        # Disable button and show loading
-        self.discover_button.config(state='disabled', text='Discovering...')
-        
-        def discover_thread():
+        self.discover_button.setEnabled(False)
+        self.discover_button.setText("Discovering…")
+
+        def _thread():
             try:
-                # Validate token format
-                if not token or len(token) < 10:
-                    self.root.after(0, lambda: messagebox.showerror("Invalid Token", "API token appears too short. Please check your token."))
+                if len(token) < 10:
+                    self._bridge.run_in_main(lambda: QMessageBox.critical(
+                        self, "Invalid Token", "API token appears too short."))
                     return
-                    
-                base_url = self.config['shockosc'].get('openshock_url', 'https://api.openshock.app')
-                # Use v1 endpoints for discovery since they work with API tokens
-                # v2 /shares endpoint requires session cookies, not API tokens
-                endpoints_to_try = [
-                    "/1/shockers/own",    # V1: Get own shockers directly (preferred)
-                    "/1/shockers/shared", # V1: Get shared shockers
-                    "/1/devices/own",     # V1: Fallback to devices with shockers
-                ]
-                
-                headers = {
-                    'Open-Shock-Token': token,
-                    'User-Agent': 'VRCChatbox-ShockOSC/1.0',
-                    'Accept': 'application/json'
-                }
-                
-                
-                # Try different endpoints until we find one that works
-                response = None
-                successful_url = None
-                
-                for endpoint in endpoints_to_try:
-                    url = f"{base_url}{endpoint}"
-                    
+                base = self.config['shockosc'].get('openshock_url', 'https://api.openshock.app')
+                endpoints = ["/1/shockers/own", "/1/shockers/shared", "/1/devices/own"]
+                headers = {'Open-Shock-Token': token,
+                           'User-Agent': 'VRCChatbox-ShockOSC/1.0',
+                           'Accept': 'application/json'}
+                response, url = None, None
+                for ep in endpoints:
+                    url = f"{base}{ep}"
                     try:
                         response = requests.get(url, headers=headers, timeout=10)
-                        
                         if response.status_code == 200:
-                            successful_url = url
                             break
-                        elif response.status_code == 404:
-                            continue
-                        else:
-                            # Continue trying other endpoints for 4xx errors, but break for auth issues
-                            if response.status_code == 401:
-                                break
-                            continue
-                    except requests.RequestException as e:
+                        if response.status_code == 401:
+                            break
+                    except requests.RequestException:
                         continue
-                
+
                 if not response or response.status_code != 200:
-                    if not response:
-                        error_msg = "Failed to connect to any OpenShock API endpoint. Possible issues:\n"
-                        error_msg += "• Network connectivity problems\n"
-                        error_msg += "• OpenShock servers unavailable\n"
-                        error_msg += f"• All endpoints tried: {endpoints_to_try}"
-                        self.root.after(0, lambda: messagebox.showerror("Connection Error", error_msg))
-                        return
-                    elif response.status_code == 400:
-                        error_msg = f"Bad Request (400) from all endpoints. This might mean:\n"
-                        error_msg += f"• Invalid API token format\n"
-                        error_msg += f"• Missing required headers\n"
-                        error_msg += f"• Token length: {len(token)} chars\n"
-                        error_msg += f"• Last response: {response.text[:200]}"
-                        self.root.after(0, lambda: messagebox.showerror("API Error", error_msg))
-                        return
-                    elif response.status_code == 401:
-                        self.root.after(0, lambda: messagebox.showerror("Authentication Error", "Invalid API token. Please check your token and try again."))
-                        return
-                    elif response.status_code == 403:
-                        self.root.after(0, lambda: messagebox.showerror("Permission Error", "Token doesn't have permission to access devices."))
-                        return
-                    else:
-                        error_msg = f"API Error {response.status_code}\n\nResponse: {response.text[:300]}\n\nLast URL: {url if 'url' in locals() else 'Unknown'}"
-                        self.root.after(0, lambda: messagebox.showerror("API Error", error_msg))
-                        return
-                
-                try:
-                    api_response = response.json()
-                except ValueError as json_err:
-                    error_msg = f"Invalid JSON response from API:\n{response.text}\n\nJSON Error: {json_err}"
-                    self.root.after(0, lambda: messagebox.showerror("Response Error", error_msg))
+                    code = response.status_code if response else 0
+                    msgs = {
+                        0:   ("Connection Error", "Could not reach any OpenShock endpoint."),
+                        400: ("API Error", f"Bad request (400).\n{response.text[:300]}"),
+                        401: ("Auth Error", "Invalid API token."),
+                        403: ("Permission Error", "Token lacks permission to access devices."),
+                    }
+                    title, msg = msgs.get(code, ("API Error", f"HTTP {code}\n{response.text[:300]}"))
+                    self._bridge.run_in_main(lambda t=title, m=msg: QMessageBox.critical(self, t, m))
                     return
-                
-                shockers = []
-                
-                # Handle different response formats - prioritize v1 shocker endpoints
-                devices = None
-                
-                # Check if this is from the /shockers/* endpoints (v1 API)
-                if isinstance(api_response, dict) and 'data' in api_response:
-                    # OpenShock API typically wraps responses in a 'data' field
-                    data = api_response['data']
-                    
+
+                try:
+                    api = response.json()
+                except ValueError as e:
+                    self._bridge.run_in_main(lambda: QMessageBox.critical(
+                        self, "Parse Error", f"Invalid JSON: {e}"))
+                    return
+
+                shockers, devices = [], None
+                if isinstance(api, dict) and 'data' in api:
+                    data = api['data']
                     if isinstance(data, list):
-                        # Check if these are direct shockers or devices with shockers
-                        if data and isinstance(data[0], dict) and 'shockers' in data[0]:
-                            # These are devices containing shockers
+                        if data and 'shockers' in data[0]:
                             devices = data
-                        elif data and isinstance(data[0], dict) and ('id' in data[0] or 'name' in data[0]):
-                            # These might be direct shockers
-                            for shocker in data:
-                                shockers.append({
-                                    'id': shocker.get('id'),
-                                    'name': shocker.get('name', f"Shocker {shocker.get('id', 'Unknown')}"),
-                                    'device_name': shocker.get('device', {}).get('name', 'Unknown Device') if isinstance(shocker.get('device'), dict) else 'Unknown Device'
-                                })
-                            devices = None  # Skip device processing below
-                elif isinstance(api_response, list):
-                    # Direct list of devices/shockers
-                    devices = api_response
-                elif isinstance(api_response, dict):
-                    # Check for other common wrapper keys
-                    if 'devices' in api_response:
-                        devices = api_response['devices'] 
-                    elif 'shockers' in api_response:
-                        # Direct shockers response (legacy format)
-                        direct_shockers = api_response['shockers']
-                        for shocker in direct_shockers:
-                            shockers.append({
-                                'id': shocker.get('id'),
-                                'name': shocker.get('name', f"Shocker {shocker.get('id', 'Unknown')}"),
-                                'device_name': shocker.get('device', {}).get('name', 'Unknown Device') if isinstance(shocker.get('device'), dict) else 'Unknown Device'
-                            })
-                        devices = None  # Skip device processing below
+                        elif data and ('id' in data[0] or 'name' in data[0]):
+                            for s in data:
+                                shockers.append({'id': s.get('id'),
+                                    'name': s.get('name', f"Shocker {s.get('id')}"),
+                                    'device_name': (s.get('device', {}).get('name', 'Unknown')
+                                                    if isinstance(s.get('device'), dict) else 'Unknown')})
+                elif isinstance(api, list):
+                    devices = api
+                elif isinstance(api, dict):
+                    if 'devices' in api:
+                        devices = api['devices']
+                    elif 'shockers' in api:
+                        for s in api['shockers']:
+                            shockers.append({'id': s.get('id'),
+                                'name': s.get('name', f"Shocker {s.get('id')}"),
+                                'device_name': 'Unknown'})
                     else:
-                        # Response might be a single object or different format
-                        devices = [api_response]
-                
-                # Process devices if we have them
+                        devices = [api]
+
                 if devices:
-                    for device in devices:
-                        # Handle different device formats
-                        device_shockers = []
-                        if isinstance(device, dict):
-                            if 'shockers' in device:
-                                device_shockers = device['shockers']
-                            elif 'id' in device and 'name' in device:
-                                # This might be a shocker object directly
-                                device_shockers = [device]
-                        
-                        if device_shockers:
-                            for shocker in device_shockers:
-                                if isinstance(shocker, dict) and 'id' in shocker:
-                                    shockers.append({
-                                        'id': shocker['id'],
-                                        'name': shocker.get('name', f"Shocker {shocker['id']}"),
-                                        'device_name': device.get('name', 'Unknown Device') if isinstance(device, dict) else 'Unknown Device'
-                                    })
-                
-                # Update UI on main thread
-                self.root.after(0, lambda: self._update_discovered_shockers(shockers))
-                
-            except requests.RequestException as e:
-                error_msg = f"Network error connecting to OpenShock API:\n{str(e)}\n\nURL: {url if 'url' in locals() else 'Unknown'}"
-                print(f"DEBUG: Network error: {e}")
-                self.root.after(0, lambda: messagebox.showerror("Network Error", error_msg))
+                    for dev in devices:
+                        ds = dev.get('shockers', [dev]) if isinstance(dev, dict) else []
+                        for s in ds:
+                            if isinstance(s, dict) and 'id' in s:
+                                shockers.append({'id': s['id'],
+                                    'name': s.get('name', f"Shocker {s['id']}"),
+                                    'device_name': dev.get('name', 'Unknown') if isinstance(dev, dict) else 'Unknown'})
+
+                captured = shockers
+                self._bridge.run_in_main(lambda: self._update_discovered_shockers(captured))
             except Exception as e:
-                error_msg = f"Unexpected error during discovery:\n{str(e)}\n\nType: {type(e).__name__}"
-                print(f"DEBUG: Unexpected error: {e}")
                 import traceback
-                print(f"DEBUG: Traceback: {traceback.format_exc()}")
-                self.root.after(0, lambda: messagebox.showerror("Error", error_msg))
+                msg = f"{e}\n\n{traceback.format_exc()}"
+                self._bridge.run_in_main(lambda m=msg: QMessageBox.critical(self, "Error", m))
             finally:
-                # Re-enable button
-                self.root.after(0, lambda: self.discover_button.config(state='normal', text='Discover Shockers'))
-        
-        # Start discovery in background thread
-        threading.Thread(target=discover_thread, daemon=True).start()
-    
+                self._bridge.run_in_main(lambda: (
+                    self.discover_button.setEnabled(True),
+                    self.discover_button.setText("Discover Shockers"),
+                ))
+
+        threading.Thread(target=_thread, daemon=True).start()
+
     def _update_discovered_shockers(self, shockers):
-        """Update the shockers display with discovered shockers"""
-        # Store discovered shockers
         self.discovered_shockers = {str(s['id']): s for s in shockers}
-        
         if not shockers:
-            messagebox.showinfo("No Shockers", "No shockers found. Make sure you have shockers configured in your OpenShock account.")
+            QMessageBox.information(self, "No Shockers",
+                "No shockers found. Check your OpenShock account.")
             return
-        
-        messagebox.showinfo("Success", f"Discovered {len(shockers)} shocker(s).")
+        QMessageBox.information(self, "Success", f"Discovered {len(shockers)} shocker(s).")
         self.refresh_shockers_display()
-    
+
     def refresh_shockers_display(self):
-        """Refresh the shockers treeview display"""
-        # Clear existing items
-        for item in self.shockers_tree.get_children():
-            self.shockers_tree.delete(item)
-        
-        shock_config = self.config.get("shockosc", {})
-        assigned_shockers = shock_config.get("shockers", {})
-        
-        # Add discovered shockers if available
+        self.shockers_table.setRowCount(0)
+        assigned = self.config.get("shockosc", {}).get("shockers", {})
         if hasattr(self, 'discovered_shockers'):
-            for shocker_id, shocker in self.discovered_shockers.items():
-                # Check if we have saved assignment info
-                if shocker_id in assigned_shockers:
-                    if isinstance(assigned_shockers[shocker_id], dict):
-                        group = assigned_shockers[shocker_id].get("group", "")
-                    else:
-                        # Legacy format - just the group string
-                        group = assigned_shockers[shocker_id]
-                else:
-                    group = ""
-                display_name = f"{shocker['name']} ({shocker['device_name']})"
-                self.shockers_tree.insert('', 'end', values=(display_name, shocker_id, group))
+            for sid, s in self.discovered_shockers.items():
+                info = assigned.get(sid)
+                group = info.get("group", "") if isinstance(info, dict) else (info or "")
+                self._add_shocker_row(f"{s['name']} ({s['device_name']})", sid, group)
         else:
-            # If no discovered shockers yet, show saved assignments from config
-            for shocker_id, assignment_info in assigned_shockers.items():
-                if isinstance(assignment_info, dict):
-                    # New format with complete info
-                    group = assignment_info.get("group", "")
-                    name = assignment_info.get("name", f"Shocker {shocker_id[:8]}...")
-                    device_name = assignment_info.get("device_name", "Unknown Device")
-                    display_name = f"{name} ({device_name})"
+            for sid, info in assigned.items():
+                if isinstance(info, dict):
+                    name = f"{info.get('name', sid[:8])} ({info.get('device_name', 'Unknown')})"
+                    group = info.get("group", "")
                 else:
-                    # Legacy format - just the group string
-                    group = assignment_info
-                    display_name = f"Shocker {shocker_id[:8]}..."
-                self.shockers_tree.insert('', 'end', values=(display_name, shocker_id, group))
-    
+                    name, group = f"Shocker {sid[:8]}…", info
+                self._add_shocker_row(name, sid, group)
+
+    def _add_shocker_row(self, name, sid, group):
+        r = self.shockers_table.rowCount()
+        self.shockers_table.insertRow(r)
+        self.shockers_table.setItem(r, 0, QTableWidgetItem(name))
+        self.shockers_table.setItem(r, 1, QTableWidgetItem(str(sid)))
+        self.shockers_table.setItem(r, 2, QTableWidgetItem(group))
+
     def assign_shocker(self):
-        """Assign selected shocker to a group"""
-        selection = self.shockers_tree.selection()
-        if not selection:
-            messagebox.showwarning("No Selection", "Please select a shocker to assign.")
-            return
-        
-        group = self.group_var.get()
+        row = self.shockers_table.currentRow()
+        if row < 0:
+            QMessageBox.warning(self, "No Selection", "Select a shocker first."); return
+        group = self.group_combo.currentText()
         if not group:
-            messagebox.showwarning("No Group", "Please select a group to assign the shocker to.")
-            return
-        
-        # Get shocker ID from selection
-        item = self.shockers_tree.item(selection[0])
-        shocker_id = item['values'][1]
-        
-        # Get full shocker info for saving
-        shocker_info = None
-        if hasattr(self, 'discovered_shockers') and shocker_id in self.discovered_shockers:
-            shocker_info = self.discovered_shockers[shocker_id]
-        
-        # Update config with complete shocker information
-        if "shockers" not in self.config["shockosc"]:
-            self.config["shockosc"]["shockers"] = {}
-        
-        # Save complete shocker info instead of just group
-        self.config["shockosc"]["shockers"][shocker_id] = {
+            QMessageBox.warning(self, "No Group", "Select a group first."); return
+        sid = self.shockers_table.item(row, 1).text()
+        info = self.discovered_shockers.get(sid) if hasattr(self, 'discovered_shockers') else None
+        self.config["shockosc"].setdefault("shockers", {})[sid] = {
             "group": group,
-            "name": shocker_info.get('name', f"Shocker {shocker_id[:8]}...") if shocker_info else f"Shocker {shocker_id[:8]}...",
-            "device_name": shocker_info.get('device_name', 'Unknown Device') if shocker_info else 'Unknown Device'
+            "name": info.get('name', f"Shocker {sid[:8]}") if info else f"Shocker {sid[:8]}",
+            "device_name": info.get('device_name', 'Unknown') if info else 'Unknown',
         }
         save_app_config(self.config)
-        
-        # Update messenger if available
         if self.messenger and hasattr(self.messenger, 'update_shock_config'):
             self.messenger.update_shock_config(self.config["shockosc"])
-        
-        # Refresh display
         self.refresh_shockers_display()
-        
-        # Clear selection
-        self.group_var.set("")
-        
-        self.status_label.config(text=f"Shocker assigned to {group}")
-        self.root.after(2000, lambda: self.status_label.config(text=""))
-    
+        self.group_combo.setCurrentIndex(-1)
+        self._set_status(f"Shocker assigned to {group}")
+
     def unassign_shocker(self):
-        """Unassign selected shocker from its group"""
-        selection = self.shockers_tree.selection()
-        if not selection:
-            messagebox.showwarning("No Selection", "Please select a shocker to unassign.")
-            return
-        
-        # Get shocker ID from selection
-        item = self.shockers_tree.item(selection[0])
-        shocker_id = item['values'][1]
-        
-        # Remove from config
-        if "shockers" in self.config["shockosc"] and shocker_id in self.config["shockosc"]["shockers"]:
-            del self.config["shockosc"]["shockers"][shocker_id]
+        row = self.shockers_table.currentRow()
+        if row < 0:
+            QMessageBox.warning(self, "No Selection", "Select a shocker first."); return
+        sid = self.shockers_table.item(row, 1).text()
+        shockers = self.config.get("shockosc", {}).get("shockers", {})
+        if sid in shockers:
+            del shockers[sid]
             save_app_config(self.config)
-            
-            # Update messenger if available
             if self.messenger and hasattr(self.messenger, 'update_shock_config'):
                 self.messenger.update_shock_config(self.config["shockosc"])
-            
-            # Refresh display
             self.refresh_shockers_display()
-            
-            self.status_label.config(text="Shocker unassigned")
-            self.root.after(2000, lambda: self.status_label.config(text=""))
-    
+            self._set_status("Shocker unassigned")
+
     def test_leftleg(self):
-        """Test leftleg shocker"""
-        if not self.messenger or not hasattr(self.messenger, 'shock_controller'):
-            return
-
-        # Disable button during test
-        self.test_leftleg_button.config(state='disabled', text='Testing...')
-
-        def test_thread():
-            try:
-                # Run the leftleg test
-                self.messenger.shock_controller.test_leftleg_shock()
-            except Exception as e:
-                print(f"Left leg test failed: {str(e)}")
-            finally:
-                # Re-enable button
-                self.root.after(0, lambda: self.test_leftleg_button.config(state='normal', text='Test Left'))
-
-        # Start test in background thread
-        threading.Thread(target=test_thread, daemon=True).start()
+        if not self.messenger or not hasattr(self.messenger, 'shock_controller'): return
+        self.test_leftleg_button.setEnabled(False)
+        self.test_leftleg_button.setText("Testing…")
+        def _run():
+            try: self.messenger.shock_controller.test_leftleg_shock()
+            except Exception as e: print(f"Left test failed: {e}")
+            finally: self._bridge.run_in_main(lambda: (
+                self.test_leftleg_button.setEnabled(True),
+                self.test_leftleg_button.setText("Test Left"),
+            ))
+        threading.Thread(target=_run, daemon=True).start()
 
     def test_rightleg(self):
-        """Test rightleg shocker"""
-        if not self.messenger or not hasattr(self.messenger, 'shock_controller'):
-            return
+        if not self.messenger or not hasattr(self.messenger, 'shock_controller'): return
+        self.test_rightleg_button.setEnabled(False)
+        self.test_rightleg_button.setText("Testing…")
+        def _run():
+            try: self.messenger.shock_controller.test_rightleg_shock()
+            except Exception as e: print(f"Right test failed: {e}")
+            finally: self._bridge.run_in_main(lambda: (
+                self.test_rightleg_button.setEnabled(True),
+                self.test_rightleg_button.setText("Test Right"),
+            ))
+        threading.Thread(target=_run, daemon=True).start()
 
-        # Disable button during test
-        self.test_rightleg_button.config(state='disabled', text='Testing...')
-
-        def test_thread():
-            try:
-                # Run the rightleg test
-                self.messenger.shock_controller.test_rightleg_shock()
-            except Exception as e:
-                print(f"Right leg test failed: {str(e)}")
-            finally:
-                # Re-enable button
-                self.root.after(0, lambda: self.test_rightleg_button.config(state='normal', text='Test Right'))
-
-        # Start test in background thread
-        threading.Thread(target=test_thread, daemon=True).start()
-    
     def _convert_legacy_shocker_config(self):
-        """Convert legacy shocker config format (string) to new format (dict)"""
-        shock_config = self.config.get("shockosc", {})
-        shockers_config = shock_config.get("shockers", {})
-        
-        # Check if we have any legacy entries to convert
-        needs_save = False
-        for shocker_id, assignment_info in shockers_config.items():
-            if isinstance(assignment_info, str):
-                # This is a legacy entry - convert it
-                shockers_config[shocker_id] = {
-                    "group": assignment_info,
-                    "name": f"Shocker {shocker_id[:8]}...",
-                    "device_name": "Unknown Device"
-                }
-                needs_save = True
-        
-        # Save if we made changes
-        if needs_save:
+        shockers = self.config.get("shockosc", {}).get("shockers", {})
+        changed = False
+        for sid, info in shockers.items():
+            if isinstance(info, str):
+                shockers[sid] = {"group": info, "name": f"Shocker {sid[:8]}…", "device_name": "Unknown"}
+                changed = True
+        if changed:
             save_app_config(self.config)
 
-    def setup_slide_ui(self, parent):
-        """Setup Slide settings UI"""
-        slide_config = self.config.get("slide", {})
-
-        # Master enable toggle
-        self.slide_enabled_var = tk.BooleanVar(value=slide_config.get("enabled", False))
-        enabled_checkbox = ttk.Checkbutton(
-            parent,
-            text="Enable Slide Feature",
-            variable=self.slide_enabled_var,
-            command=self.on_slide_settings_change
-        )
-        enabled_checkbox.grid(row=0, column=0, columnspan=3, sticky=tk.W, pady=(0, 10))
-
-        # Poll interval
-        ttk.Label(parent, text="Poll Interval (seconds):").grid(row=1, column=0, sticky=tk.W, pady=5)
-        self.slide_poll_interval_var = tk.DoubleVar(value=slide_config.get("poll_interval", 1.0))
-        poll_spinbox = ttk.Spinbox(
-            parent,
-            from_=0.1,
-            to=10.0,
-            increment=0.1,
-            width=10,
-            textvariable=self.slide_poll_interval_var,
-            command=self.on_slide_settings_change
-        )
-        poll_spinbox.grid(row=1, column=1, sticky=tk.W, padx=(10, 0), pady=5)
-        poll_spinbox.bind('<KeyRelease>', lambda e: self.on_slide_settings_change())
-
-        # Intensity range settings
-        intensity_frame = ttk.LabelFrame(parent, text="Value-Based Intensity Range", padding="5")
-        intensity_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
-
-        ttk.Label(intensity_frame, text="Min Intensity (%):").grid(row=0, column=0, sticky=tk.W, padx=5, pady=3)
-        self.slide_intensity_min_var = tk.IntVar(value=slide_config.get("intensity_min", 30))
-        min_spinbox = ttk.Spinbox(
-            intensity_frame,
-            from_=0,
-            to=100,
-            increment=5,
-            textvariable=self.slide_intensity_min_var,
-            width=8,
-            command=self.on_slide_settings_change
-        )
-        min_spinbox.grid(row=0, column=1, sticky=tk.W, padx=5, pady=3)
-        min_spinbox.bind('<KeyRelease>', lambda e: self.on_slide_settings_change())
-
-        ttk.Label(intensity_frame, text="Max Intensity (%):").grid(row=0, column=2, sticky=tk.W, padx=5, pady=3)
-        self.slide_intensity_max_var = tk.IntVar(value=slide_config.get("intensity_max", 70))
-        max_spinbox = ttk.Spinbox(
-            intensity_frame,
-            from_=0,
-            to=100,
-            increment=5,
-            textvariable=self.slide_intensity_max_var,
-            width=8,
-            command=self.on_slide_settings_change
-        )
-        max_spinbox.grid(row=0, column=3, sticky=tk.W, padx=5, pady=3)
-        max_spinbox.bind('<KeyRelease>', lambda e: self.on_slide_settings_change())
-
-        ttk.Label(intensity_frame, text="Probability Cooldown (sec):").grid(row=1, column=0, sticky=tk.W, padx=5, pady=3)
-        self.slide_probability_cooldown_var = tk.DoubleVar(value=slide_config.get("probability_cooldown", 10.0))
-        cooldown_spinbox = ttk.Spinbox(
-            intensity_frame,
-            from_=0.0,
-            to=60.0,
-            increment=1.0,
-            textvariable=self.slide_probability_cooldown_var,
-            width=8,
-            command=self.on_slide_settings_change
-        )
-        cooldown_spinbox.grid(row=1, column=1, sticky=tk.W, padx=5, pady=3)
-        cooldown_spinbox.bind('<KeyRelease>', lambda e: self.on_slide_settings_change())
-
-        # Variables label
-        ttk.Label(parent, text="OSC Variables:").grid(row=3, column=0, columnspan=3, sticky=tk.W, pady=(15, 5))
-
-        # Treeview for variables
-        tree_frame = ttk.Frame(parent)
-        tree_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
-
-        self.slide_vars_tree = ttk.Treeview(
-            tree_frame,
-            columns=('Name', 'OSC Path', 'Threshold', 'Shockers', 'Hold', 'Enabled'),
-            show='headings',
-            height=8
-        )
-        self.slide_vars_tree.heading('Name', text='Name')
-        self.slide_vars_tree.heading('OSC Path', text='OSC Path')
-        self.slide_vars_tree.heading('Threshold', text='Threshold')
-        self.slide_vars_tree.heading('Shockers', text='Shockers')
-        self.slide_vars_tree.heading('Hold', text='Hold')
-        self.slide_vars_tree.heading('Enabled', text='Enabled')
-        self.slide_vars_tree.column('Name', width=90)
-        self.slide_vars_tree.column('OSC Path', width=160)
-        self.slide_vars_tree.column('Threshold', width=60)
-        self.slide_vars_tree.column('Shockers', width=70)
-        self.slide_vars_tree.column('Hold', width=50)
-        self.slide_vars_tree.column('Enabled', width=50)
-        self.slide_vars_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        # Scrollbar
-        tree_scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.slide_vars_tree.yview)
-        tree_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.slide_vars_tree.configure(yscrollcommand=tree_scrollbar.set)
-
-        # Buttons
-        button_frame = ttk.Frame(parent)
-        button_frame.grid(row=5, column=0, columnspan=3, pady=10)
-
-        ttk.Button(button_frame, text="Add Variable", command=self.add_slide_variable).grid(row=0, column=0, padx=5)
-        ttk.Button(button_frame, text="Edit Selected", command=self.edit_slide_variable).grid(row=0, column=1, padx=5)
-        ttk.Button(button_frame, text="Remove Selected", command=self.remove_slide_variable).grid(row=0, column=2, padx=5)
-
-        # Load existing variables
-        self.refresh_slide_variables_display()
+    # ── Slide logic ────────────────────────────────────────────────────────
 
     def add_slide_variable(self):
-        """Show dialog to add a new slide variable"""
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Add Slide Variable")
-        dialog.geometry("450x250")
-        dialog.transient(self.root)
-        dialog.grab_set()
-
-        # Name
-        ttk.Label(dialog, text="Name:").grid(row=0, column=0, sticky=tk.W, padx=10, pady=8)
-        name_var = tk.StringVar()
-        ttk.Entry(dialog, textvariable=name_var, width=35).grid(row=0, column=1, padx=10, pady=8)
-
-        # OSC Path
-        ttk.Label(dialog, text="OSC Path:").grid(row=1, column=0, sticky=tk.W, padx=10, pady=8)
-        path_var = tk.StringVar(value="/avatar/parameters/")
-        ttk.Entry(dialog, textvariable=path_var, width=35).grid(row=1, column=1, padx=10, pady=8)
-
-        # Threshold
-        ttk.Label(dialog, text="Threshold (0.0-1.0):").grid(row=2, column=0, sticky=tk.W, padx=10, pady=8)
-        threshold_var = tk.DoubleVar(value=0.0)
-        ttk.Spinbox(
-            dialog,
-            from_=0.0,
-            to=1.0,
-            increment=0.05,
-            textvariable=threshold_var,
-            width=10
-        ).grid(row=2, column=1, sticky=tk.W, padx=10, pady=8)
-
-        # Shockers selection
-        ttk.Label(dialog, text="Shockers:").grid(row=3, column=0, sticky=tk.W, padx=10, pady=8)
-        selected_shockers = []  # Store selected shocker IDs
-
-        def open_shocker_selection():
-            """Open dialog to select shockers"""
-            shocker_dialog = tk.Toplevel(dialog)
-            shocker_dialog.title("Select Shockers")
-            shocker_dialog.geometry("400x300")
-            shocker_dialog.transient(dialog)
-            shocker_dialog.grab_set()
-
-            ttk.Label(shocker_dialog, text="Select shockers for this variable:").pack(pady=10)
-
-            # Get available shockers from config
-            shockers_config = self.config.get("shockosc", {}).get("shockers", {})
-
-            if not shockers_config:
-                ttk.Label(shocker_dialog, text="No shockers configured in ShockOSC tab").pack(pady=20)
-                ttk.Button(shocker_dialog, text="Close", command=shocker_dialog.destroy).pack(pady=10)
-                return
-
-            # Create checkbuttons for each shocker
-            shocker_vars = {}
-            for shocker_id, shocker_info in shockers_config.items():
-                if isinstance(shocker_info, dict):
-                    shocker_name = shocker_info.get("name", shocker_id[:8])
-                    device_name = shocker_info.get("device_name", "")
-                    label = f"{shocker_name} ({device_name})" if device_name else shocker_name
-                else:
-                    label = shocker_id[:8]
-
-                var = tk.BooleanVar(value=shocker_id in selected_shockers)
-                shocker_vars[shocker_id] = var
-                ttk.Checkbutton(shocker_dialog, text=label, variable=var).pack(anchor=tk.W, padx=20)
-
-            def save_selection():
-                selected_shockers.clear()
-                for shocker_id, var in shocker_vars.items():
-                    if var.get():
-                        selected_shockers.append(shocker_id)
-                update_shocker_label()
-                shocker_dialog.destroy()
-
-            ttk.Button(shocker_dialog, text="Save", command=save_selection).pack(pady=10)
-
-        def update_shocker_label():
-            count = len(selected_shockers)
-            shocker_button.config(text=f"Select Shockers ({count} selected)" if count > 0 else "Select Shockers (All)")
-
-        shocker_button = ttk.Button(dialog, text="Select Shockers (All)", command=open_shocker_selection)
-        shocker_button.grid(row=3, column=1, sticky=tk.W, padx=10, pady=8)
-
-        # Hold mode toggle
-        hold_mode_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(dialog, text="Enable Hold Mode", variable=hold_mode_var).grid(row=4, column=0, sticky=tk.W, padx=10, pady=8)
-
-        # Hold time
-        ttk.Label(dialog, text="Hold Time (sec):").grid(row=4, column=1, sticky=tk.W, padx=(80, 0), pady=8)
-        hold_time_var = tk.DoubleVar(value=3.0)
-        ttk.Spinbox(
-            dialog,
-            from_=1.0,
-            to=10.0,
-            increment=0.5,
-            textvariable=hold_time_var,
-            width=8
-        ).grid(row=4, column=1, sticky=tk.E, padx=10, pady=8)
-
-        # Hold threshold
-        ttk.Label(dialog, text="Hold Threshold:").grid(row=5, column=0, sticky=tk.W, padx=10, pady=8)
-        hold_threshold_var = tk.DoubleVar(value=0.9)
-        ttk.Spinbox(
-            dialog,
-            from_=0.0,
-            to=1.0,
-            increment=0.05,
-            textvariable=hold_threshold_var,
-            width=8
-        ).grid(row=5, column=1, sticky=tk.W, padx=10, pady=8)
-
-        # Enabled
-        enabled_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(dialog, text="Enabled", variable=enabled_var).grid(row=6, column=0, columnspan=2, pady=8)
-
-        # Buttons
-        def save_variable():
-            # Validation
-            if not name_var.get().strip():
-                messagebox.showerror("Error", "Name cannot be empty")
-                return
-            if not path_var.get().strip():
-                messagebox.showerror("Error", "OSC Path cannot be empty")
-                return
-
-            # Add to config
-            if "slide" not in self.config:
-                self.config["slide"] = {"enabled": False, "poll_interval": 1.0, "variables": []}
-
-            self.config["slide"]["variables"].append({
-                "name": name_var.get().strip(),
-                "osc_path": path_var.get().strip(),
-                "threshold": round(threshold_var.get(), 2),
-                "enabled": enabled_var.get(),
-                "shockers": selected_shockers,
-                "hold_mode": hold_mode_var.get(),
-                "hold_time": round(hold_time_var.get(), 1),
-                "hold_threshold": round(hold_threshold_var.get(), 2)
-            })
-
+        dlg = SlideVariableDialog(self, None, self.config)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.config.setdefault("slide", {}).setdefault("variables", []).append(dlg.get_data())
             save_app_config(self.config)
             self.refresh_slide_variables_display()
             self.update_slide_controller()
-            dialog.destroy()
-
-        button_frame = ttk.Frame(dialog)
-        button_frame.grid(row=7, column=0, columnspan=2, pady=10)
-        ttk.Button(button_frame, text="Save", command=save_variable).grid(row=0, column=0, padx=5)
-        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).grid(row=0, column=1, padx=5)
 
     def edit_slide_variable(self):
-        """Show dialog to edit selected slide variable"""
-        selected = self.slide_vars_tree.selection()
-        if not selected:
-            messagebox.showwarning("No Selection", "Please select a variable to edit")
-            return
-
-        # Get the selected index
-        item = selected[0]
-        item_index = self.slide_vars_tree.index(item)
-
-        # Get current variable data
+        row = self.slide_vars_table.currentRow()
+        if row < 0:
+            QMessageBox.warning(self, "No Selection", "Select a variable to edit."); return
         variables = self.config.get("slide", {}).get("variables", [])
-        if item_index >= len(variables):
-            return
-
-        current_var = variables[item_index]
-
-        # Create dialog
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Edit Slide Variable")
-        dialog.geometry("450x310")
-        dialog.transient(self.root)
-        dialog.grab_set()
-
-        # Name
-        ttk.Label(dialog, text="Name:").grid(row=0, column=0, sticky=tk.W, padx=10, pady=8)
-        name_var = tk.StringVar(value=current_var.get("name", ""))
-        ttk.Entry(dialog, textvariable=name_var, width=35).grid(row=0, column=1, padx=10, pady=8)
-
-        # OSC Path
-        ttk.Label(dialog, text="OSC Path:").grid(row=1, column=0, sticky=tk.W, padx=10, pady=8)
-        path_var = tk.StringVar(value=current_var.get("osc_path", ""))
-        ttk.Entry(dialog, textvariable=path_var, width=35).grid(row=1, column=1, padx=10, pady=8)
-
-        # Threshold
-        ttk.Label(dialog, text="Threshold (0.0-1.0):").grid(row=2, column=0, sticky=tk.W, padx=10, pady=8)
-        threshold_var = tk.DoubleVar(value=current_var.get("threshold", 0.0))
-        ttk.Spinbox(
-            dialog,
-            from_=0.0,
-            to=1.0,
-            increment=0.05,
-            textvariable=threshold_var,
-            width=10
-        ).grid(row=2, column=1, sticky=tk.W, padx=10, pady=8)
-
-        # Shockers selection
-        ttk.Label(dialog, text="Shockers:").grid(row=3, column=0, sticky=tk.W, padx=10, pady=8)
-        selected_shockers = list(current_var.get("shockers", []))  # Pre-populate from current variable
-
-        def open_shocker_selection():
-            """Open dialog to select shockers"""
-            shocker_dialog = tk.Toplevel(dialog)
-            shocker_dialog.title("Select Shockers")
-            shocker_dialog.geometry("400x300")
-            shocker_dialog.transient(dialog)
-            shocker_dialog.grab_set()
-
-            ttk.Label(shocker_dialog, text="Select shockers for this variable:").pack(pady=10)
-
-            # Get available shockers from config
-            shockers_config = self.config.get("shockosc", {}).get("shockers", {})
-
-            if not shockers_config:
-                ttk.Label(shocker_dialog, text="No shockers configured in ShockOSC tab").pack(pady=20)
-                ttk.Button(shocker_dialog, text="Close", command=shocker_dialog.destroy).pack(pady=10)
-                return
-
-            # Create checkbuttons for each shocker
-            shocker_vars = {}
-            for shocker_id, shocker_info in shockers_config.items():
-                if isinstance(shocker_info, dict):
-                    shocker_name = shocker_info.get("name", shocker_id[:8])
-                    device_name = shocker_info.get("device_name", "")
-                    label = f"{shocker_name} ({device_name})" if device_name else shocker_name
-                else:
-                    label = shocker_id[:8]
-
-                var = tk.BooleanVar(value=shocker_id in selected_shockers)
-                shocker_vars[shocker_id] = var
-                ttk.Checkbutton(shocker_dialog, text=label, variable=var).pack(anchor=tk.W, padx=20)
-
-            def save_selection():
-                selected_shockers.clear()
-                for shocker_id, var in shocker_vars.items():
-                    if var.get():
-                        selected_shockers.append(shocker_id)
-                update_shocker_label()
-                shocker_dialog.destroy()
-
-            ttk.Button(shocker_dialog, text="Save", command=save_selection).pack(pady=10)
-
-        def update_shocker_label():
-            count = len(selected_shockers)
-            shocker_button.config(text=f"Select Shockers ({count} selected)" if count > 0 else "Select Shockers (All)")
-
-        shocker_button = ttk.Button(dialog, text="Select Shockers (All)", command=open_shocker_selection)
-        shocker_button.grid(row=3, column=1, sticky=tk.W, padx=10, pady=8)
-        # Update button label with current count
-        update_shocker_label()
-
-        # Hold mode toggle
-        hold_mode_var = tk.BooleanVar(value=current_var.get("hold_mode", False))
-        ttk.Checkbutton(dialog, text="Enable Hold Mode", variable=hold_mode_var).grid(row=4, column=0, sticky=tk.W, padx=10, pady=8)
-
-        # Hold time
-        ttk.Label(dialog, text="Hold Time (sec):").grid(row=4, column=1, sticky=tk.W, padx=(80, 0), pady=8)
-        hold_time_var = tk.DoubleVar(value=current_var.get("hold_time", 3.0))
-        ttk.Spinbox(
-            dialog,
-            from_=1.0,
-            to=10.0,
-            increment=0.5,
-            textvariable=hold_time_var,
-            width=8
-        ).grid(row=4, column=1, sticky=tk.E, padx=10, pady=8)
-
-        # Hold threshold
-        ttk.Label(dialog, text="Hold Threshold:").grid(row=5, column=0, sticky=tk.W, padx=10, pady=8)
-        hold_threshold_var = tk.DoubleVar(value=current_var.get("hold_threshold", 0.9))
-        ttk.Spinbox(
-            dialog,
-            from_=0.0,
-            to=1.0,
-            increment=0.05,
-            textvariable=hold_threshold_var,
-            width=8
-        ).grid(row=5, column=1, sticky=tk.W, padx=10, pady=8)
-
-        # Enabled
-        enabled_var = tk.BooleanVar(value=current_var.get("enabled", True))
-        ttk.Checkbutton(dialog, text="Enabled", variable=enabled_var).grid(row=6, column=0, columnspan=2, pady=8)
-
-        # Buttons
-        def save_variable():
-            # Validation
-            if not name_var.get().strip():
-                messagebox.showerror("Error", "Name cannot be empty")
-                return
-            if not path_var.get().strip():
-                messagebox.showerror("Error", "OSC Path cannot be empty")
-                return
-
-            # Update config
-            self.config["slide"]["variables"][item_index] = {
-                "name": name_var.get().strip(),
-                "osc_path": path_var.get().strip(),
-                "threshold": round(threshold_var.get(), 2),
-                "enabled": enabled_var.get(),
-                "shockers": selected_shockers,
-                "hold_mode": hold_mode_var.get(),
-                "hold_time": round(hold_time_var.get(), 1),
-                "hold_threshold": round(hold_threshold_var.get(), 2)
-            }
-
+        if row >= len(variables): return
+        dlg = SlideVariableDialog(self, variables[row], self.config)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            variables[row] = dlg.get_data()
             save_app_config(self.config)
             self.refresh_slide_variables_display()
             self.update_slide_controller()
-            dialog.destroy()
-
-        button_frame = ttk.Frame(dialog)
-        button_frame.grid(row=7, column=0, columnspan=2, pady=10)
-        ttk.Button(button_frame, text="Save", command=save_variable).grid(row=0, column=0, padx=5)
-        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).grid(row=0, column=1, padx=5)
 
     def remove_slide_variable(self):
-        """Remove selected slide variable"""
-        selected = self.slide_vars_tree.selection()
-        if not selected:
-            messagebox.showwarning("No Selection", "Please select a variable to remove")
-            return
-
-        # Confirm deletion
-        if not messagebox.askyesno("Confirm Delete", "Are you sure you want to delete this variable?"):
-            return
-
-        # Get the selected index
-        item = selected[0]
-        item_index = self.slide_vars_tree.index(item)
-
-        # Remove from config
-        if "slide" in self.config and "variables" in self.config["slide"]:
-            variables = self.config["slide"]["variables"]
-            if item_index < len(variables):
-                del variables[item_index]
-                save_app_config(self.config)
-                self.refresh_slide_variables_display()
-                self.update_slide_controller()
+        row = self.slide_vars_table.currentRow()
+        if row < 0:
+            QMessageBox.warning(self, "No Selection", "Select a variable to remove."); return
+        if QMessageBox.question(self, "Confirm", "Delete this variable?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        ) != QMessageBox.StandardButton.Yes: return
+        variables = self.config.get("slide", {}).get("variables", [])
+        if row < len(variables):
+            del variables[row]
+            save_app_config(self.config)
+            self.refresh_slide_variables_display()
+            self.update_slide_controller()
 
     def refresh_slide_variables_display(self):
-        """Refresh the slide variables treeview"""
-        # Clear existing items
-        for item in self.slide_vars_tree.get_children():
-            self.slide_vars_tree.delete(item)
+        self.slide_vars_table.setRowCount(0)
+        for v in self.config.get("slide", {}).get("variables", []):
+            r = self.slide_vars_table.rowCount()
+            self.slide_vars_table.insertRow(r)
+            shockers = v.get("shockers", [])
+            hold = f"{v.get('hold_time', 3.0)}s" if v.get("hold_mode") else "—"
+            self.slide_vars_table.setItem(r, 0, QTableWidgetItem(v.get("name", "")))
+            self.slide_vars_table.setItem(r, 1, QTableWidgetItem(v.get("osc_path", "")))
+            self.slide_vars_table.setItem(r, 2, QTableWidgetItem(f"{v.get('threshold', 0.0):.2f}"))
+            self.slide_vars_table.setItem(r, 3, QTableWidgetItem(str(len(shockers)) if shockers else "All"))
+            self.slide_vars_table.setItem(r, 4, QTableWidgetItem(hold))
+            self.slide_vars_table.setItem(r, 5, QTableWidgetItem("Yes" if v.get("enabled", True) else "No"))
 
-        # Load variables from config
-        variables = self.config.get("slide", {}).get("variables", [])
-
-        # Insert each variable as a row
-        for var in variables:
-            name = var.get("name", "")
-            osc_path = var.get("osc_path", "")
-            threshold = var.get("threshold", 0.0)
-            shockers = var.get("shockers", [])
-            hold_mode = var.get("hold_mode", False)
-            enabled = "Yes" if var.get("enabled", True) else "No"
-
-            # Format shockers count
-            shocker_count = f"{len(shockers)}" if shockers else "All"
-
-            # Format hold mode
-            if hold_mode:
-                hold_time = var.get("hold_time", 3.0)
-                hold_display = f"{hold_time}s"
-            else:
-                hold_display = "-"
-
-            self.slide_vars_tree.insert('', tk.END, values=(name, osc_path, f"{threshold:.2f}", shocker_count, hold_display, enabled))
-
-    def on_slide_settings_change(self):
-        """Handle Slide settings change"""
-        if "slide" not in self.config:
-            self.config["slide"] = {}
-
-        self.config["slide"]["enabled"] = self.slide_enabled_var.get()
-        self.config["slide"]["poll_interval"] = round(self.slide_poll_interval_var.get(), 1)
-        self.config["slide"]["intensity_min"] = self.slide_intensity_min_var.get()
-        self.config["slide"]["intensity_max"] = self.slide_intensity_max_var.get()
-        self.config["slide"]["probability_cooldown"] = round(self.slide_probability_cooldown_var.get(), 1)
-
+    def on_slide_settings_change(self, *_):
+        self.config.setdefault("slide", {}).update({
+            "enabled":              self.slide_enabled_cb.isChecked(),
+            "poll_interval":        round(self.slide_poll_spinbox.value(), 1),
+            "intensity_min":        self.slide_min_spinbox.value(),
+            "intensity_max":        self.slide_max_spinbox.value(),
+            "probability_cooldown": round(self.slide_prob_cooldown_spinbox.value(), 1),
+        })
         save_app_config(self.config)
-
-        # Update messenger's slide controller if available
         self.update_slide_controller()
-
-        # Show status
         if hasattr(self, 'status_label'):
-            status = "enabled" if self.config["slide"]["enabled"] else "disabled"
-            self.status_label.config(text=f"Slide feature {status}")
-            self.root.after(2000, lambda: self.status_label.config(text=""))
+            s = "enabled" if self.config["slide"]["enabled"] else "disabled"
+            self._set_status(f"Slide {s}")
 
     def update_slide_controller(self):
-        """Update the slide controller with current config"""
         if self.messenger and hasattr(self.messenger, 'slide_controller'):
             self.messenger.update_slide_config(self.config.get("slide", {}))
 
     def run(self):
-        """Run the GUI"""
-        self.root.mainloop()
+        self.show()
+        self.app.exec()
 
+
+# ── Dialogs ───────────────────────────────────────────────────────────────────
+
+class SlideVariableDialog(QDialog):
+    def __init__(self, parent, current, config):
+        super().__init__(parent)
+        self.config = config
+        self.selected_shockers = list(current.get("shockers", [])) if current else []
+        self.setWindowTitle("Edit Variable" if current else "Add Variable")
+        self.setFixedSize(560, 400)
+        self.setModal(True)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 28, 28, 20)
+        layout.setSpacing(18)
+
+        grid = QGridLayout()
+        grid.setSpacing(14)
+        grid.setColumnMinimumWidth(0, 160)
+
+        grid.addWidget(_label("Name", "field_label"), 0, 0)
+        self.name_edit = QLineEdit()
+        if current: self.name_edit.setText(current.get("name", ""))
+        grid.addWidget(self.name_edit, 0, 1)
+
+        grid.addWidget(_label("OSC Path", "field_label"), 1, 0)
+        self.path_edit = QLineEdit()
+        self.path_edit.setText(current.get("osc_path", "/avatar/parameters/") if current else "/avatar/parameters/")
+        grid.addWidget(self.path_edit, 1, 1)
+
+        grid.addWidget(_label("Threshold (0–1)", "field_label"), 2, 0)
+        self.threshold_s = Stepper(0.0, 1.0, 0.05, current.get("threshold", 0.0) if current else 0.0,
+                                   decimals=2, spin_width=110)
+        thr_row = QHBoxLayout()
+        thr_row.addWidget(self.threshold_s)
+        thr_row.addStretch()
+        grid.addLayout(thr_row, 2, 1)
+
+        grid.addWidget(_label("Shockers", "field_label"), 3, 0)
+        self.shocker_btn = QPushButton("Select Shockers (All)")
+        self.shocker_btn.clicked.connect(self._pick_shockers)
+        grid.addWidget(self.shocker_btn, 3, 1)
+        self._update_shocker_btn()
+
+        grid.addWidget(_label("Hold Mode", "field_label"), 4, 0)
+        self.hold_mode_cb = QCheckBox("Enable Hold Mode")
+        self.hold_mode_cb.setChecked(current.get("hold_mode", False) if current else False)
+        grid.addWidget(self.hold_mode_cb, 4, 1)
+
+        grid.addWidget(_label("Hold Time (s)", "field_label"), 5, 0)
+        ht_row = QHBoxLayout()
+        self.hold_time_s = Stepper(1.0, 10.0, 0.5, current.get("hold_time", 3.0) if current else 3.0,
+                                   decimals=1, spin_width=110)
+        ht_row.addWidget(self.hold_time_s)
+        ht_row.addStretch()
+        grid.addLayout(ht_row, 5, 1)
+
+        grid.addWidget(_label("Hold Threshold", "field_label"), 6, 0)
+        hth_row = QHBoxLayout()
+        self.hold_thresh_s = Stepper(0.0, 1.0, 0.05, current.get("hold_threshold", 0.9) if current else 0.9,
+                                     decimals=2, spin_width=110)
+        hth_row.addWidget(self.hold_thresh_s)
+        hth_row.addStretch()
+        grid.addLayout(hth_row, 6, 1)
+
+        grid.addWidget(_label("Status", "field_label"), 7, 0)
+        self.enabled_cb = QCheckBox("Enabled")
+        self.enabled_cb.setChecked(current.get("enabled", True) if current else True)
+        grid.addWidget(self.enabled_cb, 7, 1)
+
+        layout.addLayout(grid)
+        layout.addStretch()
+
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Save |
+                                QDialogButtonBox.StandardButton.Cancel)
+        btns.accepted.connect(self._validate)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def _update_shocker_btn(self):
+        n = len(self.selected_shockers)
+        self.shocker_btn.setText(f"Select Shockers ({n} selected)" if n else "Select Shockers (All)")
+
+    def _pick_shockers(self):
+        dlg = ShockerSelectionDialog(self, self.config, self.selected_shockers)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.selected_shockers = dlg.get_selected()
+            self._update_shocker_btn()
+
+    def _validate(self):
+        if not self.name_edit.text().strip():
+            QMessageBox.critical(self, "Error", "Name cannot be empty."); return
+        if not self.path_edit.text().strip():
+            QMessageBox.critical(self, "Error", "OSC Path cannot be empty."); return
+        self.accept()
+
+    def get_data(self):
+        return {
+            "name":            self.name_edit.text().strip(),
+            "osc_path":        self.path_edit.text().strip(),
+            "threshold":       round(self.threshold_s.value(), 2),
+            "enabled":         self.enabled_cb.isChecked(),
+            "shockers":        self.selected_shockers,
+            "hold_mode":       self.hold_mode_cb.isChecked(),
+            "hold_time":       round(self.hold_time_s.value(), 1),
+            "hold_threshold":  round(self.hold_thresh_s.value(), 2),
+        }
+
+
+class ShockerSelectionDialog(QDialog):
+    def __init__(self, parent, config, current_selected):
+        super().__init__(parent)
+        self.setWindowTitle("Select Shockers")
+        self.setFixedSize(440, 360)
+        self.setModal(True)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 20)
+        layout.setSpacing(14)
+        layout.addWidget(QLabel("Select shockers for this variable:"))
+
+        self._cbs = {}
+        for sid, info in config.get("shockosc", {}).get("shockers", {}).items():
+            if isinstance(info, dict):
+                label = f"{info.get('name', sid[:8])} ({info.get('device_name', '')})"
+            else:
+                label = sid[:8]
+            cb = QCheckBox(label)
+            cb.setChecked(sid in current_selected)
+            self._cbs[sid] = cb
+            layout.addWidget(cb)
+
+        if not self._cbs:
+            layout.addWidget(_label("No shockers configured in ShockOSC tab.", "field_label"))
+
+        layout.addStretch()
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Save |
+                                QDialogButtonBox.StandardButton.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def get_selected(self):
+        return [sid for sid, cb in self._cbs.items() if cb.isChecked()]
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
 
 def show_settings_gui(messenger=None):
-    """Show the settings GUI"""
     gui = VRCChatboxGUI(messenger)
     gui.run()
 
