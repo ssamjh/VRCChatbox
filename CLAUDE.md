@@ -20,6 +20,12 @@ start.bat
 pip install python-osc PyQt6 requests websockets
 ```
 
+**Build to `.exe` (Windows, `--onedir`):**
+```bat
+build.bat
+```
+Creates `.build_venv/`, installs deps + PyInstaller, outputs to `dist\VRCChatbox\VRCChatbox.exe`. Re-running reuses the venv. Config files (`app_config.json`, `boops.json`) are stored in `%APPDATA%\VRCChatbox\` and are never touched by the build. On first run they are created from defaults; if old copies exist next to the exe/script they are migrated automatically.
+
 **OSC monitoring tool** (useful for debugging VRChat avatar parameters):
 ```bash
 python test.py

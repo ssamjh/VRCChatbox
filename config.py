@@ -1,6 +1,28 @@
 import string
 import json
 import os
+import sys
+import shutil
+from pathlib import Path
+
+
+def get_config_dir() -> Path:
+    d = Path(os.environ["APPDATA"]) / "VRCChatbox"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _config_path(filename: str) -> Path:
+    dest = get_config_dir() / filename
+    if not dest.exists():
+        # Migrate from legacy location (next to exe or script)
+        if getattr(sys, "frozen", False):
+            old = Path(sys.executable).parent / filename
+        else:
+            old = Path(__file__).parent / filename
+        if old.exists():
+            shutil.copy2(old, dest)
+    return dest
 
 
 def get_default_message_config():
@@ -45,7 +67,7 @@ def get_default_message_config():
 
 def load_app_config():
     """Load application configuration from config.json"""
-    config_file = "app_config.json"
+    config_file = _config_path("app_config.json")
     default_config = {
         "show_music": True,
         "messages": get_default_message_config(),
@@ -125,7 +147,7 @@ def load_app_config():
 
 def save_app_config(config):
     """Save application configuration to config.json"""
-    config_file = "app_config.json"
+    config_file = _config_path("app_config.json")
     try:
         with open(config_file, 'w') as f:
             json.dump(config, f, indent=2)

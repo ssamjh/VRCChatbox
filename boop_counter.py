@@ -2,10 +2,13 @@ import json
 import os
 import datetime
 from pathlib import Path
+from config import _config_path
 
 
 class BoopCounter:
-    def __init__(self, filename="boops.json"):
+    def __init__(self, filename=None):
+        if filename is None:
+            filename = _config_path("boops.json")
         self.filename = filename
         self.total_boops = 0
         self.daily_boops = 0

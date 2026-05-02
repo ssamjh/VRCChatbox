@@ -557,10 +557,24 @@ class VRChatMessenger:
 
 def main():
     import sys
-    vrc = VRChatMessenger()
 
-    # Check if GUI mode is requested
-    if "--gui" in sys.argv:
+    gui_mode = "--gui" in sys.argv or getattr(sys, "frozen", False)
+
+    try:
+        vrc = VRChatMessenger()
+    except OSError as e:
+        if e.winerror == 10048 or "address already in use" in str(e).lower():
+            msg = "Could not start: OSC port 9001 is already in use.\n\nAnother instance may already be running."
+            if gui_mode:
+                from PyQt6.QtWidgets import QApplication, QMessageBox
+                _app = QApplication.instance() or QApplication(sys.argv)
+                QMessageBox.critical(None, "VRCChatbox — Port conflict", msg)
+            else:
+                print(f"Error: {msg}")
+            return
+        raise
+
+    if gui_mode:
         try:
             from gui import show_settings_gui
             print("Opening settings GUI...")

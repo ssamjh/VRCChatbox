@@ -4,3 +4,7 @@ __pycache__/*
 /ShockOsc
 test_openshock_signalr_fixed.py
 test.bat
+.build_venv/
+build/
+dist/
+*.spec
