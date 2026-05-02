@@ -824,10 +824,15 @@ class VRCChatboxGUI(QMainWindow):
         self.slide_max_spinbox.valueChanged.connect(self.on_slide_settings_change)
         ic.addWidget(self.slide_max_spinbox, 1, 1)
 
-        ic.addWidget(_label("Prob. Cooldown (s)", "field_label"), 2, 0)
-        self.slide_prob_cooldown_spinbox = Stepper(0.0, 60.0, 1.0, sl.get("probability_cooldown", 10.0), decimals=1, spin_width=90)
-        self.slide_prob_cooldown_spinbox.valueChanged.connect(self.on_slide_settings_change)
-        ic.addWidget(self.slide_prob_cooldown_spinbox, 2, 1)
+        ic.addWidget(_label("Cooldown Min (s)", "field_label"), 2, 0)
+        self.slide_cooldown_min_spinbox = Stepper(0.0, 300.0, 1.0, sl.get("cooldown_min", 5.0), decimals=1, spin_width=90)
+        self.slide_cooldown_min_spinbox.valueChanged.connect(self.on_slide_settings_change)
+        ic.addWidget(self.slide_cooldown_min_spinbox, 2, 1)
+
+        ic.addWidget(_label("Cooldown Max (s)", "field_label"), 3, 0)
+        self.slide_cooldown_max_spinbox = Stepper(0.0, 300.0, 1.0, sl.get("cooldown_max", 20.0), decimals=1, spin_width=90)
+        self.slide_cooldown_max_spinbox.valueChanged.connect(self.on_slide_settings_change)
+        ic.addWidget(self.slide_cooldown_max_spinbox, 3, 1)
 
         right.addWidget(int_card)
 
@@ -1315,7 +1320,8 @@ class VRCChatboxGUI(QMainWindow):
             "poll_interval":        round(self.slide_poll_spinbox.value(), 1),
             "intensity_min":        self.slide_min_spinbox.value(),
             "intensity_max":        self.slide_max_spinbox.value(),
-            "probability_cooldown": round(self.slide_prob_cooldown_spinbox.value(), 1),
+            "cooldown_min": round(self.slide_cooldown_min_spinbox.value(), 1),
+            "cooldown_max": round(self.slide_cooldown_max_spinbox.value(), 1),
         })
         save_app_config(self.config)
         self.update_slide_controller()

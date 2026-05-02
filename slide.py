@@ -25,8 +25,8 @@ class SlideController:
         self.hold_timers = {}  # {osc_path: threading.Timer}
         self.hold_active = {}  # {osc_path: bool}
 
-        # Probability mode cooldown tracking
-        self.probability_cooldowns = {}  # {osc_path: timestamp}
+        # Per-shocker slide cooldown tracking
+        self.shocker_cooldowns = {}  # {shocker_id: end_time}
 
         # Config
         self.config = {}
@@ -147,12 +147,9 @@ class SlideController:
 
         # Cubic probability curve for dramatic ramp-up (always active)
         # P = value³ gives: 0.5→12.5%, 0.7→34%, 0.9→73%
-        # Check probability cooldown before triggering
-        if not self._is_probability_on_cooldown(osc_path):
-            probability = current_value ** 3
-            if random.random() <= probability:
-                # Probability succeeded - trigger shock with value-based intensity
-                self._trigger_slide_shock(var, current_value, use_value_intensity=True, skip_cooldown=False)
+        probability = current_value ** 3
+        if random.random() <= probability:
+            self._trigger_slide_shock(var, current_value, use_value_intensity=True, skip_cooldown=False)
 
     def _trigger_slide_shock(self, var, current_value, use_value_intensity=True, skip_cooldown=False):
         """Trigger a shock from a slide variable
@@ -179,20 +176,21 @@ class SlideController:
             print(f"Slide shock skipped - no shockers configured")
             return
 
-        # Filter out shockers whose groups are on cooldown
+        # Filter out shockers on group cooldown or individual slide cooldown
         available_shockers = []
         affected_groups = []
         for shocker_id in variable_shockers:
             if shocker_id in shockers_config:
                 shocker_info = shockers_config[shocker_id]
-                # Handle both old format (string) and new format (dict)
                 group = shocker_info.get("group") if isinstance(shocker_info, dict) else shocker_info
 
-                # Only include if group is not on cooldown
-                if not self.shock_controller.is_group_on_cooldown(group):
-                    available_shockers.append(shocker_id)
-                    if group not in affected_groups:
-                        affected_groups.append(group)
+                if self.shock_controller.is_group_on_cooldown(group):
+                    continue
+                if not skip_cooldown and self._is_shocker_on_slide_cooldown(shocker_id):
+                    continue
+                available_shockers.append(shocker_id)
+                if group not in affected_groups:
+                    affected_groups.append(group)
 
         if not available_shockers:
             print(f"Slide shock skipped - all selected shockers on cooldown")
@@ -223,11 +221,10 @@ class SlideController:
             if self.shock_controller.shock_callback:
                 self.shock_controller.shock_callback(intensity, group, duration)
 
-        # Start probability cooldown if not skipped (hold mode skips this)
+        # Start per-shocker slide cooldowns if not skipped (hold mode skips this)
         if not skip_cooldown:
-            osc_path = var.get("osc_path")
-            if osc_path:
-                self._start_probability_cooldown(osc_path)
+            for shocker_id in available_shockers:
+                self._start_shocker_slide_cooldown(shocker_id)
 
         var_name = var.get("name", var.get("osc_path", "unknown"))
         trigger_type = "hold mode" if skip_cooldown else "probability"
@@ -336,26 +333,15 @@ class SlideController:
         # Trigger with random intensity (not value-based), bypassing cooldown
         self._trigger_slide_shock(var, current_value, use_value_intensity=False, skip_cooldown=True)
 
-    def _is_probability_on_cooldown(self, osc_path):
-        """Check if a variable is on probability cooldown
+    def _is_shocker_on_slide_cooldown(self, shocker_id):
+        """Check if a shocker is on its individual slide cooldown"""
+        end_time = self.shocker_cooldowns.get(shocker_id)
+        return end_time is not None and time.time() < end_time
 
-        Args:
-            osc_path: OSC path to check
-
-        Returns:
-            bool: True if on cooldown, False otherwise
-        """
-        if osc_path not in self.probability_cooldowns:
-            return False
-
-        cooldown_time = self.config.get("probability_cooldown", 10.0)
-        elapsed = time.time() - self.probability_cooldowns[osc_path]
-        return elapsed < cooldown_time
-
-    def _start_probability_cooldown(self, osc_path):
-        """Start probability cooldown for a variable
-
-        Args:
-            osc_path: OSC path to start cooldown for
-        """
-        self.probability_cooldowns[osc_path] = time.time()
+    def _start_shocker_slide_cooldown(self, shocker_id):
+        """Start a random slide cooldown for a specific shocker"""
+        cooldown_min = self.config.get("cooldown_min", 5.0)
+        cooldown_max = self.config.get("cooldown_max", 20.0)
+        duration = random.uniform(cooldown_min, cooldown_max)
+        self.shocker_cooldowns[shocker_id] = time.time() + duration
+        print(f"Shocker {shocker_id[:8]}... slide cooldown {duration:.1f}s")
