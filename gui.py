@@ -1,5 +1,7 @@
 import sys
+import queue
 import threading
+from datetime import datetime
 import requests
 
 from PyQt6.QtWidgets import (
@@ -306,9 +308,10 @@ class VRCChatboxGUI(QMainWindow):
         self._nav_group.setExclusive(True)
 
         pages = [
-            ("  General",  self._build_general_page()),
-            ("  ShockOSC", self._build_shockosc_page()),
-            ("  Slide",    self._build_slide_page()),
+            ("  General",     self._build_general_page()),
+            ("  ShockOSC",    self._build_shockosc_page()),
+            ("  Slide",       self._build_slide_page()),
+            ("  OSC Monitor", self._build_osc_monitor_page()),
         ]
         for i, (label, page) in enumerate(pages):
             btn = QPushButton(label)
@@ -345,8 +348,18 @@ class VRCChatboxGUI(QMainWindow):
         outer.addWidget(bottom)
 
     def _nav_to(self, index):
+        prev = self._stack.currentIndex()
+        osc_idx = len(self._nav_btns) - 1
+        if prev == osc_idx and index != osc_idx:
+            self._osc_timer.stop()
+            if self.messenger:
+                self.messenger.set_monitor_callback(None)
         self._stack.setCurrentIndex(index)
         self._nav_btns[index].setChecked(True)
+        if index == osc_idx and prev != osc_idx:
+            if self.messenger:
+                self.messenger.set_monitor_callback(self._on_osc_message)
+            self._osc_timer.start()
 
     def _set_status(self, text, ms=2500):
         self.status_label.setText(text)
@@ -693,6 +706,123 @@ class VRCChatboxGUI(QMainWindow):
 
         self.refresh_slide_variables_display()
         return page
+
+    # ── OSC Monitor page ───────────────────────────────────────────────────
+
+    def _build_osc_monitor_page(self):
+        self._osc_queue = queue.Queue()
+        self._osc_params = {}  # {address: (display_value, type_str, datetime)}
+
+        self._osc_timer = QTimer()
+        self._osc_timer.setInterval(100)
+        self._osc_timer.timeout.connect(self._osc_monitor_tick)
+
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(12)
+
+        layout.addWidget(_label("OSC Monitor", "section_title"))
+        layout.addWidget(_hline())
+
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(8)
+
+        self._osc_filter = QLineEdit()
+        self._osc_filter.setPlaceholderText("Filter by path…")
+        self._osc_filter.textChanged.connect(self._refresh_osc_table)
+        toolbar.addWidget(self._osc_filter, stretch=1)
+
+        self._osc_count_lbl = QLabel("0 parameters")
+        self._osc_count_lbl.setObjectName("field_label")
+        toolbar.addWidget(self._osc_count_lbl)
+
+        copy_btn = QPushButton("Copy Path")
+        copy_btn.setToolTip("Copy selected row's OSC path to clipboard (or double-click a row)")
+        copy_btn.clicked.connect(self._copy_osc_path)
+        toolbar.addWidget(copy_btn)
+
+        clear_btn = QPushButton("Clear")
+        clear_btn.clicked.connect(self._clear_osc_monitor)
+        toolbar.addWidget(clear_btn)
+
+        layout.addLayout(toolbar)
+
+        self._osc_table = QTableWidget(0, 4)
+        self._osc_table.setHorizontalHeaderLabels(["OSC Path", "Value", "Type", "Updated"])
+        oh = self._osc_table.horizontalHeader()
+        oh.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        oh.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        oh.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        oh.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self._osc_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._osc_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._osc_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._osc_table.setAlternatingRowColors(True)
+        self._osc_table.doubleClicked.connect(self._copy_osc_path)
+        layout.addWidget(self._osc_table, stretch=1)
+
+        layout.addWidget(_label("Double-click or select a row and press Copy Path to copy the OSC path.", "field_label"))
+
+        return page
+
+    def _on_osc_message(self, address, args):
+        value = args[0] if len(args) == 1 else list(args)
+        self._osc_queue.put((address, value, datetime.now()))
+
+    def _osc_monitor_tick(self):
+        updated = False
+        while True:
+            try:
+                address, value, ts = self._osc_queue.get_nowait()
+            except queue.Empty:
+                break
+            if isinstance(value, bool):
+                type_str, display = "bool", "True" if value else "False"
+            elif isinstance(value, float):
+                type_str, display = "float", f"{value:.4f}"
+            elif isinstance(value, int):
+                type_str, display = "int", str(value)
+            else:
+                type_str, display = type(value).__name__, str(value)
+            self._osc_params[address] = (display, type_str, ts)
+            updated = True
+        if updated:
+            self._osc_count_lbl.setText(f"{len(self._osc_params)} parameters")
+            self._refresh_osc_table()
+
+    def _refresh_osc_table(self):
+        filt = self._osc_filter.text().lower()
+        # Remember selected path so we can re-select after rebuild
+        sel_row = self._osc_table.currentRow()
+        sel_path = (self._osc_table.item(sel_row, 0).text()
+                    if sel_row >= 0 and self._osc_table.item(sel_row, 0) else None)
+
+        self._osc_table.setRowCount(0)
+        for address, (display, type_str, ts) in sorted(self._osc_params.items()):
+            if filt and filt not in address.lower():
+                continue
+            r = self._osc_table.rowCount()
+            self._osc_table.insertRow(r)
+            self._osc_table.setItem(r, 0, QTableWidgetItem(address))
+            self._osc_table.setItem(r, 1, QTableWidgetItem(display))
+            self._osc_table.setItem(r, 2, QTableWidgetItem(type_str))
+            self._osc_table.setItem(r, 3, QTableWidgetItem(ts.strftime("%H:%M:%S.%f")[:-3]))
+            if address == sel_path:
+                self._osc_table.selectRow(r)
+
+    def _copy_osc_path(self):
+        row = self._osc_table.currentRow()
+        if row < 0:
+            return
+        path = self._osc_table.item(row, 0).text()
+        QApplication.clipboard().setText(path)
+        self._set_status(f"Copied: {path}")
+
+    def _clear_osc_monitor(self):
+        self._osc_params.clear()
+        self._osc_table.setRowCount(0)
+        self._osc_count_lbl.setText("0 parameters")
 
     # ── ShockOSC logic ─────────────────────────────────────────────────────
 

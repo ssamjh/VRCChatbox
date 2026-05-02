@@ -68,9 +68,11 @@ class VRChatMessenger:
         self._initialize_messages()
 
         # Setup OSC dispatcher for listening
+        self._monitor_callback = None
         self.dispatcher = dispatcher.Dispatcher()
+        self.dispatcher.map("*", self._forward_to_monitor)
         self.dispatcher.map("/avatar/parameters/OSCBoop", self._handle_boop)
-        
+
         # Add ShockOSC parameter listeners
         self.dispatcher.map("/avatar/parameters/ShockOsc/leftleg", self._handle_shock_trigger)
         self.dispatcher.map("/avatar/parameters/ShockOsc/rightleg", self._handle_shock_trigger)
@@ -110,6 +112,13 @@ class VRChatMessenger:
         print(
             f"OSC listener thread started. Waiting for messages on {ip}:{listen_port}"
         )
+
+    def _forward_to_monitor(self, address, *args):
+        if self._monitor_callback:
+            self._monitor_callback(address, args)
+
+    def set_monitor_callback(self, cb):
+        self._monitor_callback = cb
 
     def _rate_limited_updates(self):
         """Thread that handles sending updates at a rate-limited pace"""
