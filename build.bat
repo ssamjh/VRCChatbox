@@ -23,6 +23,7 @@ echo Building...
     --name VRCChatbox ^
     --noconfirm ^
     --collect-all websockets ^
+    --hidden-import PyQt6.QtSvg ^
     app.py
 if errorlevel 1 ( echo Build failed & pause & exit /b 1 )
 

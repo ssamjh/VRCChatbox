@@ -1,4 +1,8 @@
 import sys
+import os
+import tempfile
+import atexit
+import shutil
 import threading
 import requests
 
@@ -15,14 +19,33 @@ from PyQt6.QtGui import QFont
 
 from config import load_app_config, save_app_config
 
-# ── Palette ───────────────────────────────────────────────────────────────────
-# Inline SVG arrow for combobox (border-trick doesn't work in Qt)
-_ARROW_SVG = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'><polygon points='0,0 10,0 5,6' fill='%23CAC4D0'/></svg>"
+# ── SVG icon helpers ──────────────────────────────────────────────────────────
+# data: URIs are unreliable in frozen Qt apps — write SVGs to temp files instead.
+_svg_dir = tempfile.mkdtemp(prefix="vrcchatbox_icons_")
+atexit.register(lambda: shutil.rmtree(_svg_dir, ignore_errors=True))
 
-# Inline SVG radio-button indicators — CSS background-color on ::indicator is unreliable
-_RADIO_OFF_SVG     = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'><circle cx='9' cy='9' r='7.5' fill='none' stroke='%23938F99' stroke-width='2'/></svg>"
-_RADIO_HOVER_SVG   = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'><circle cx='9' cy='9' r='7.5' fill='none' stroke='%23D0BCFF' stroke-width='2'/></svg>"
-_RADIO_ON_SVG      = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'><circle cx='9' cy='9' r='7.5' fill='none' stroke='%23D0BCFF' stroke-width='2'/><circle cx='9' cy='9' r='4.5' fill='%23D0BCFF'/></svg>"
+def _svg(name: str, content: str) -> str:
+    path = os.path.join(_svg_dir, name)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+    return path.replace("\\", "/")
+
+# ── Palette ───────────────────────────────────────────────────────────────────
+_ARROW_SVG = _svg("arrow.svg",
+    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'>"
+    "<polygon points='0,0 10,0 5,6' fill='#CAC4D0'/></svg>")
+
+# SVG radio-button indicators — CSS background-color on ::indicator is unreliable
+_RADIO_OFF_SVG = _svg("radio_off.svg",
+    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'>"
+    "<circle cx='9' cy='9' r='7.5' fill='none' stroke='#938F99' stroke-width='2'/></svg>")
+_RADIO_HOVER_SVG = _svg("radio_hover.svg",
+    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'>"
+    "<circle cx='9' cy='9' r='7.5' fill='none' stroke='#D0BCFF' stroke-width='2'/></svg>")
+_RADIO_ON_SVG = _svg("radio_on.svg",
+    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'>"
+    "<circle cx='9' cy='9' r='7.5' fill='none' stroke='#D0BCFF' stroke-width='2'/>"
+    "<circle cx='9' cy='9' r='4.5' fill='#D0BCFF'/></svg>")
 
 BG       = "#1C1B1F"   # main background
 SURFACE  = "#2B2930"   # cards / sidebar
