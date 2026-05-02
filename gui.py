@@ -1,8 +1,4 @@
 import sys
-import os
-import tempfile
-import atexit
-import shutil
 import threading
 import requests
 
@@ -15,153 +11,83 @@ from PyQt6.QtWidgets import (
     QSizePolicy, QScrollArea, QInputDialog,
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QPalette, QColor
 
 from config import load_app_config, save_app_config
 
-# ── SVG icon helpers ──────────────────────────────────────────────────────────
-# data: URIs are unreliable in frozen Qt apps — write SVGs to temp files instead.
-_svg_dir = tempfile.mkdtemp(prefix="vrcchatbox_icons_")
-atexit.register(lambda: shutil.rmtree(_svg_dir, ignore_errors=True))
+# ── Theme ─────────────────────────────────────────────────────────────────────
+BG       = "#1C1B1F"
+SURFACE  = "#2B2930"
+SURFACE2 = "#37333E"
+PRIMARY  = "#D0BCFF"
+PRIM_CON = "#4F378B"
+ON_SURF  = "#E6E1E5"
+ON_VAR   = "#CAC4D0"
+OUTLINE  = "#938F99"
+OUT_VAR  = "#49454F"
+POSITIVE = "#A8D5A2"
 
-def _svg(name: str, content: str) -> str:
-    path = os.path.join(_svg_dir, name)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(content)
-    return path.replace("\\", "/")
 
-# ── Palette ───────────────────────────────────────────────────────────────────
-_ARROW_SVG = _svg("arrow.svg",
-    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'>"
-    "<polygon points='0,0 10,0 5,6' fill='#CAC4D0'/></svg>")
+def _make_palette() -> QPalette:
+    p = QPalette()
+    p.setColor(QPalette.ColorRole.Window,         QColor(BG))
+    p.setColor(QPalette.ColorRole.WindowText,      QColor(ON_SURF))
+    p.setColor(QPalette.ColorRole.Base,            QColor(SURFACE))
+    p.setColor(QPalette.ColorRole.AlternateBase,   QColor(SURFACE2))
+    p.setColor(QPalette.ColorRole.ToolTipBase,     QColor(SURFACE))
+    p.setColor(QPalette.ColorRole.ToolTipText,     QColor(ON_SURF))
+    p.setColor(QPalette.ColorRole.Text,            QColor(ON_SURF))
+    p.setColor(QPalette.ColorRole.Button,          QColor(SURFACE2))
+    p.setColor(QPalette.ColorRole.ButtonText,      QColor(ON_SURF))
+    p.setColor(QPalette.ColorRole.BrightText,      QColor("#FFFFFF"))
+    p.setColor(QPalette.ColorRole.Link,            QColor(PRIMARY))
+    p.setColor(QPalette.ColorRole.Highlight,       QColor(PRIM_CON))
+    p.setColor(QPalette.ColorRole.HighlightedText, QColor(ON_SURF))
+    p.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText, QColor(OUT_VAR))
+    p.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text,       QColor(OUT_VAR))
+    p.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(OUT_VAR))
+    return p
 
-# SVG radio-button indicators — CSS background-color on ::indicator is unreliable
-_RADIO_OFF_SVG = _svg("radio_off.svg",
-    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'>"
-    "<circle cx='9' cy='9' r='7.5' fill='none' stroke='#938F99' stroke-width='2'/></svg>")
-_RADIO_HOVER_SVG = _svg("radio_hover.svg",
-    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'>"
-    "<circle cx='9' cy='9' r='7.5' fill='none' stroke='#D0BCFF' stroke-width='2'/></svg>")
-_RADIO_ON_SVG = _svg("radio_on.svg",
-    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'>"
-    "<circle cx='9' cy='9' r='7.5' fill='none' stroke='#D0BCFF' stroke-width='2'/>"
-    "<circle cx='9' cy='9' r='4.5' fill='#D0BCFF'/></svg>")
-
-BG       = "#1C1B1F"   # main background
-SURFACE  = "#2B2930"   # cards / sidebar
-SURFACE2 = "#37333E"   # elevated cards inside cards
-PRIMARY  = "#D0BCFF"   # purple accent
-PRIM_CON = "#4F378B"   # primary container (selection)
-ON_SURF  = "#E6E1E5"   # primary text
-ON_VAR   = "#CAC4D0"   # secondary text
-OUTLINE  = "#938F99"   # input borders
-OUT_VAR  = "#49454F"   # subtle borders
-POSITIVE = "#A8D5A2"   # status/success green
 
 STYLE = f"""
-QMainWindow, QDialog {{
-    background-color: {BG};
-}}
-QWidget {{
-    background-color: {BG};
-    color: {ON_SURF};
-    font-family: 'Segoe UI', 'Roboto', Arial, sans-serif;
-    font-size: 10pt;
-}}
-
-/* ── Sidebar ── */
 QWidget#sidebar {{
     background-color: {SURFACE};
     border-right: 1px solid {OUT_VAR};
 }}
-
-/* ── Content pages ── */
-QStackedWidget, QStackedWidget > QWidget {{
-    background-color: {BG};
-}}
-
-/* ── Group/card boxes ── */
 QGroupBox {{
-    background-color: {SURFACE};
-    border: 1px solid {OUT_VAR};
-    border-radius: 12px;
-    margin-top: 16px;
-    padding: 14px 16px 14px 16px;
     font-weight: bold;
-    font-size: 10pt;
     color: {PRIMARY};
+    border: 1px solid {OUT_VAR};
+    border-radius: 8px;
+    margin-top: 14px;
+    padding: 10px 12px 10px 12px;
 }}
 QGroupBox::title {{
     subcontrol-origin: margin;
     subcontrol-position: top left;
-    left: 14px;
-    padding: 0 6px;
-    background-color: {SURFACE};
+    left: 10px;
+    padding: 0 4px;
+    background-color: {BG};
 }}
-
-/* ── Buttons ── */
 QPushButton {{
-    background-color: {SURFACE2};
-    color: {ON_SURF};
-    border: none;
-    border-radius: 20px;
-    padding: 8px 20px;
-    min-width: 72px;
-    font-weight: 500;
-    font-size: 10pt;
+    border-radius: 4px;
+    padding: 6px 16px;
+    min-width: 64px;
 }}
-QPushButton:hover {{
-    background-color: #4A4458;
-}}
-QPushButton:pressed {{
-    background-color: {PRIMARY};
-    color: {BG};
-}}
-QPushButton:disabled {{
-    background-color: {SURFACE};
-    color: {OUT_VAR};
-}}
-
-/* Stepper ± buttons — square, no pill radius */
-QPushButton#stepper_btn {{
-    background-color: {SURFACE2};
-    color: {PRIMARY};
-    border: 1px solid {OUT_VAR};
-    border-radius: 6px;
-    padding: 0;
-    min-width: 32px;
-    max-width: 32px;
-    min-height: 32px;
-    max-height: 32px;
-    font-size: 16pt;
-    font-weight: bold;
-}}
-QPushButton#stepper_btn:hover {{
-    background-color: #4A4458;
-    border-color: {PRIMARY};
-}}
-QPushButton#stepper_btn:pressed {{
-    background-color: {PRIMARY};
-    color: {BG};
-}}
-
-/* Nav rail buttons — use :checked so no setStyleSheet() in click handlers */
 QPushButton#nav_btn {{
     background-color: transparent;
     color: {ON_VAR};
     border: none;
     border-left: 3px solid transparent;
     border-radius: 0;
-    padding: 16px 28px;
+    padding: 14px 24px;
     min-width: 0;
-    min-height: 48px;
+    min-height: 44px;
     text-align: left;
-    font-size: 10pt;
 }}
 QPushButton#nav_btn:hover {{
     background-color: rgba(208, 188, 255, 0.08);
     color: {ON_SURF};
-    border-left: 3px solid transparent;
 }}
 QPushButton#nav_btn:checked {{
     background-color: rgba(79, 55, 139, 0.35);
@@ -169,117 +95,32 @@ QPushButton#nav_btn:checked {{
     border-left: 3px solid {PRIMARY};
     font-weight: bold;
 }}
-
-/* ── Inputs ── */
-QLineEdit, QComboBox {{
-    background-color: {SURFACE};
-    color: {ON_SURF};
-    border: 1px solid {OUTLINE};
-    border-radius: 8px;
-    padding: 8px 12px;
-    font-size: 10pt;
-    selection-background-color: {PRIM_CON};
-    selection-color: {ON_SURF};
-    min-height: 20px;
+QPushButton#stepper_btn {{
+    padding: 2px;
+    min-width: 28px;
+    max-width: 28px;
+    min-height: 28px;
+    max-height: 28px;
+    font-size: 14pt;
+    font-weight: bold;
+    border-radius: 4px;
 }}
-QLineEdit:focus, QComboBox:focus {{
-    border: 2px solid {PRIMARY};
-    padding: 7px 11px;
-}}
-QLineEdit:hover, QComboBox:hover {{
-    border-color: {ON_VAR};
-}}
-
-/* Stepper's internal QSpinBox — borderless, transparent */
-QSpinBox, QDoubleSpinBox {{
-    background-color: {SURFACE};
-    color: {ON_SURF};
-    border: 1px solid {OUTLINE};
-    border-radius: 8px;
-    padding: 6px 10px;
-    font-size: 10pt;
-    min-height: 20px;
-    selection-background-color: {PRIM_CON};
-}}
-QSpinBox:focus, QDoubleSpinBox:focus {{
-    border: 2px solid {PRIMARY};
-}}
-/* Hide native buttons — we use our own */
 QSpinBox::up-button, QSpinBox::down-button,
 QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{
     width: 0; height: 0; border: none;
 }}
-
-/* ── Combo ── */
-QComboBox::drop-down {{
-    subcontrol-origin: border;
-    subcontrol-position: top right;
-    width: 28px;
-    background-color: {SURFACE2};
-    border-left: 1px solid {OUT_VAR};
-    border-top-right-radius: 8px;
-    border-bottom-right-radius: 8px;
-}}
-QComboBox::down-arrow {{
-    image: url({_ARROW_SVG});
-    width: 10px;
-    height: 6px;
-}}
-QComboBox QAbstractItemView {{
-    background-color: {SURFACE};
-    color: {ON_SURF};
-    border: 1px solid {OUT_VAR};
-    border-radius: 8px;
-    selection-background-color: {SURFACE2};
-    outline: none;
-    padding: 4px;
-}}
-
-/* ── Checkboxes & radios ── */
-QCheckBox, QRadioButton {{
-    color: {ON_SURF};
-    spacing: 10px;
-    font-size: 10pt;
-}}
-QCheckBox::indicator {{
-    width: 18px; height: 18px;
-    border: 2px solid {OUTLINE};
+QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
+    border: 1px solid {OUTLINE};
     border-radius: 4px;
-    background-color: transparent;
+    padding: 4px 8px;
+    min-height: 20px;
 }}
-QCheckBox::indicator:hover {{ border-color: {PRIMARY}; }}
-QCheckBox::indicator:checked {{
-    background-color: {PRIMARY};
-    border-color: {PRIMARY};
+QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {{
+    border: 1px solid {PRIMARY};
 }}
-QRadioButton::indicator {{
-    width: 18px; height: 18px;
-    image: url({_RADIO_OFF_SVG});
-}}
-QRadioButton::indicator:hover {{
-    image: url({_RADIO_HOVER_SVG});
-}}
-QRadioButton::indicator:checked {{
-    image: url({_RADIO_ON_SVG});
-}}
-
-/* ── Table ── */
 QTableWidget {{
-    background-color: {SURFACE};
-    color: {ON_SURF};
     border: 1px solid {OUT_VAR};
-    border-radius: 10px;
     gridline-color: {OUT_VAR};
-    alternate-background-color: {SURFACE2};
-    font-size: 10pt;
-}}
-QTableWidget::item {{
-    padding: 8px 18px;
-    border: none;
-}}
-QTableWidget::item:selected {{
-    background-color: {PRIM_CON};
-    color: {ON_SURF};
 }}
 QHeaderView::section {{
     background-color: {SURFACE2};
@@ -287,12 +128,9 @@ QHeaderView::section {{
     border: none;
     border-right: 1px solid {OUT_VAR};
     border-bottom: 1px solid {OUT_VAR};
-    padding: 8px 12px;
+    padding: 6px 10px;
     font-weight: bold;
-    font-size: 10pt;
 }}
-
-/* ── Scrollbars ── */
 QScrollBar:vertical {{
     background: transparent;
     width: 8px;
@@ -300,52 +138,25 @@ QScrollBar:vertical {{
 QScrollBar::handle:vertical {{
     background: {OUT_VAR};
     border-radius: 4px;
-    min-height: 30px;
-}}
-QScrollBar::handle:vertical:hover {{
-    background: {OUTLINE};
+    min-height: 24px;
 }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
     background: none; height: 0;
 }}
-
-/* ── Labels ── */
-QLabel {{
-    background-color: transparent;
-    color: {ON_SURF};
-}}
 QLabel#section_title {{
     color: {PRIMARY};
-    font-size: 18pt;
+    font-size: 16pt;
     font-weight: bold;
+    background-color: transparent;
 }}
 QLabel#field_label {{
     color: {ON_VAR};
-    font-size: 9pt;
+    background-color: transparent;
 }}
 QLabel#status_lbl {{
     color: {POSITIVE};
-    font-size: 9pt;
-}}
-
-/* ── Message boxes ── */
-QMessageBox {{
-    background-color: {SURFACE};
-}}
-QMessageBox QLabel {{
-    color: {ON_SURF};
-}}
-
-/* ── Dialogs ── */
-QDialog {{
-    background-color: {SURFACE};
-}}
-QDialog QWidget {{
-    background-color: {SURFACE};
-}}
-QDialog QGroupBox {{
-    background-color: {SURFACE2};
+    background-color: transparent;
 }}
 """
 
@@ -444,7 +255,8 @@ class VRCChatboxGUI(QMainWindow):
         self.config = load_app_config()
         self._bridge = _Bridge()
 
-        self.app.setStyle("Fusion")   # Fusion respects stylesheets; native Windows style ignores ::indicator etc.
+        self.app.setStyle("Fusion")
+        self.app.setPalette(_make_palette())
         self.setWindowTitle("VRC Chatbox Settings")
         self.setFixedSize(1600, 900)
         self.app.setStyleSheet(STYLE)
@@ -793,77 +605,59 @@ class VRCChatboxGUI(QMainWindow):
         sl = self.config.get("slide", {})
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(40, 40, 40, 40)
-        layout.setSpacing(20)
-        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(12)
 
         layout.addWidget(_label("Slide", "section_title"))
         layout.addWidget(_hline())
 
-        # Two-column header
-        header_row = QHBoxLayout()
-        header_row.setSpacing(24)
-        layout.addLayout(header_row)
+        # Compact settings card — all controls in one tight grid
+        settings_card = QGroupBox("Settings")
+        sg = QGridLayout(settings_card)
+        sg.setSpacing(8)
+        sg.setContentsMargins(12, 16, 12, 12)
+        sg.setColumnMinimumWidth(0, 110)
+        sg.setColumnMinimumWidth(2, 110)
+        sg.setColumnStretch(1, 1)
+        sg.setColumnStretch(3, 1)
 
-        # Left: enable + poll + intensity
-        left = QVBoxLayout()
-        left.setSpacing(20)
-        header_row.addLayout(left, stretch=1)
-
-        ctrl_card = QGroupBox("Controls")
-        cc = QGridLayout(ctrl_card)
-        cc.setSpacing(16)
-        cc.setContentsMargins(20, 24, 20, 20)
-
-        self.slide_enabled_cb = QCheckBox("Enable Slide Feature")
+        self.slide_enabled_cb = QCheckBox("Enable Slide")
         self.slide_enabled_cb.setChecked(sl.get("enabled", False))
         self.slide_enabled_cb.toggled.connect(self.on_slide_settings_change)
-        cc.addWidget(self.slide_enabled_cb, 0, 0, 1, 2)
+        sg.addWidget(self.slide_enabled_cb, 0, 0, 1, 4)
 
-        cc.addWidget(_label("Poll Interval (s)", "field_label"), 1, 0)
-        self.slide_poll_spinbox = Stepper(0.1, 10.0, 0.1, sl.get("poll_interval", 1.0), decimals=1, spin_width=90)
+        sg.addWidget(_label("Poll interval (s)", "field_label"), 1, 0)
+        self.slide_poll_spinbox = Stepper(0.1, 10.0, 0.1, sl.get("poll_interval", 1.0), decimals=1, spin_width=75)
         self.slide_poll_spinbox.valueChanged.connect(self.on_slide_settings_change)
-        cc.addWidget(self.slide_poll_spinbox, 1, 1)
+        sg.addWidget(self.slide_poll_spinbox, 1, 1)
 
-        left.addWidget(ctrl_card)
-
-        # Right: intensity range
-        right = QVBoxLayout()
-        right.setSpacing(20)
-        header_row.addLayout(right, stretch=1)
-
-        int_card = QGroupBox("Value-Based Intensity Range")
-        ic = QGridLayout(int_card)
-        ic.setSpacing(16)
-        ic.setContentsMargins(20, 24, 20, 20)
-
-        ic.addWidget(_label("Min Intensity %", "field_label"), 0, 0)
-        self.slide_min_spinbox = Stepper(0, 100, 5, sl.get("intensity_min", 30), spin_width=90)
+        sg.addWidget(_label("Intensity min %", "field_label"), 1, 2)
+        self.slide_min_spinbox = Stepper(0, 100, 5, sl.get("intensity_min", 30), spin_width=75)
         self.slide_min_spinbox.valueChanged.connect(self.on_slide_settings_change)
-        ic.addWidget(self.slide_min_spinbox, 0, 1)
+        sg.addWidget(self.slide_min_spinbox, 1, 3)
 
-        ic.addWidget(_label("Max Intensity %", "field_label"), 1, 0)
-        self.slide_max_spinbox = Stepper(0, 100, 5, sl.get("intensity_max", 70), spin_width=90)
-        self.slide_max_spinbox.valueChanged.connect(self.on_slide_settings_change)
-        ic.addWidget(self.slide_max_spinbox, 1, 1)
-
-        ic.addWidget(_label("Cooldown Min (s)", "field_label"), 2, 0)
-        self.slide_cooldown_min_spinbox = Stepper(0.0, 300.0, 1.0, sl.get("cooldown_min", 5.0), decimals=1, spin_width=90)
+        sg.addWidget(_label("Cooldown min (s)", "field_label"), 2, 0)
+        self.slide_cooldown_min_spinbox = Stepper(0.0, 300.0, 1.0, sl.get("cooldown_min", 5.0), decimals=1, spin_width=75)
         self.slide_cooldown_min_spinbox.valueChanged.connect(self.on_slide_settings_change)
-        ic.addWidget(self.slide_cooldown_min_spinbox, 2, 1)
+        sg.addWidget(self.slide_cooldown_min_spinbox, 2, 1)
 
-        ic.addWidget(_label("Cooldown Max (s)", "field_label"), 3, 0)
-        self.slide_cooldown_max_spinbox = Stepper(0.0, 300.0, 1.0, sl.get("cooldown_max", 20.0), decimals=1, spin_width=90)
+        sg.addWidget(_label("Intensity max %", "field_label"), 2, 2)
+        self.slide_max_spinbox = Stepper(0, 100, 5, sl.get("intensity_max", 70), spin_width=75)
+        self.slide_max_spinbox.valueChanged.connect(self.on_slide_settings_change)
+        sg.addWidget(self.slide_max_spinbox, 2, 3)
+
+        sg.addWidget(_label("Cooldown max (s)", "field_label"), 3, 0)
+        self.slide_cooldown_max_spinbox = Stepper(0.0, 300.0, 1.0, sl.get("cooldown_max", 20.0), decimals=1, spin_width=75)
         self.slide_cooldown_max_spinbox.valueChanged.connect(self.on_slide_settings_change)
-        ic.addWidget(self.slide_cooldown_max_spinbox, 3, 1)
+        sg.addWidget(self.slide_cooldown_max_spinbox, 3, 1)
 
-        right.addWidget(int_card)
+        layout.addWidget(settings_card)
 
-        # Variables section
+        # Variables table — stretch=1 fills remaining space; table scrolls internally
         vars_card = QGroupBox("OSC Variables")
         vc = QVBoxLayout(vars_card)
-        vc.setSpacing(14)
-        vc.setContentsMargins(20, 24, 20, 20)
+        vc.setSpacing(8)
+        vc.setContentsMargins(12, 16, 12, 12)
 
         self.slide_vars_table = QTableWidget(0, 6)
         self.slide_vars_table.setHorizontalHeaderLabels(
@@ -879,16 +673,15 @@ class VRCChatboxGUI(QMainWindow):
         self.slide_vars_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.slide_vars_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.slide_vars_table.setAlternatingRowColors(True)
-        self.slide_vars_table.setMinimumHeight(200)
         vc.addWidget(self.slide_vars_table)
 
         btn_row = QHBoxLayout()
-        btn_row.setSpacing(12)
-        add_btn = QPushButton("Add Variable")
+        btn_row.setSpacing(8)
+        add_btn = QPushButton("Add")
         add_btn.clicked.connect(self.add_slide_variable)
-        edit_btn = QPushButton("Edit Selected")
+        edit_btn = QPushButton("Edit")
         edit_btn.clicked.connect(self.edit_slide_variable)
-        remove_btn = QPushButton("Remove Selected")
+        remove_btn = QPushButton("Remove")
         remove_btn.clicked.connect(self.remove_slide_variable)
         btn_row.addWidget(add_btn)
         btn_row.addWidget(edit_btn)
@@ -896,8 +689,7 @@ class VRCChatboxGUI(QMainWindow):
         btn_row.addStretch()
         vc.addLayout(btn_row)
 
-        layout.addWidget(vars_card)
-        layout.addStretch()
+        layout.addWidget(vars_card, stretch=1)
 
         self.refresh_slide_variables_display()
         return page
@@ -1300,11 +1092,12 @@ class VRCChatboxGUI(QMainWindow):
         row = self.slide_vars_table.currentRow()
         if row < 0:
             QMessageBox.warning(self, "No Selection", "Select a variable to edit."); return
+        config_idx = self.slide_vars_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
         variables = self.config.get("slide", {}).get("variables", [])
-        if row >= len(variables): return
-        dlg = SlideVariableDialog(self, variables[row], self.config)
+        if config_idx >= len(variables): return
+        dlg = SlideVariableDialog(self, variables[config_idx], self.config)
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            variables[row] = dlg.get_data()
+            variables[config_idx] = dlg.get_data()
             save_app_config(self.config)
             self.refresh_slide_variables_display()
             self.update_slide_controller()
@@ -1316,21 +1109,25 @@ class VRCChatboxGUI(QMainWindow):
         if QMessageBox.question(self, "Confirm", "Delete this variable?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         ) != QMessageBox.StandardButton.Yes: return
+        config_idx = self.slide_vars_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
         variables = self.config.get("slide", {}).get("variables", [])
-        if row < len(variables):
-            del variables[row]
+        if config_idx < len(variables):
+            del variables[config_idx]
             save_app_config(self.config)
             self.refresh_slide_variables_display()
             self.update_slide_controller()
 
     def refresh_slide_variables_display(self):
         self.slide_vars_table.setRowCount(0)
-        for v in self.config.get("slide", {}).get("variables", []):
-            r = self.slide_vars_table.rowCount()
+        variables = self.config.get("slide", {}).get("variables", [])
+        sorted_vars = sorted(enumerate(variables), key=lambda x: x[1].get("name", "").lower())
+        for r, (config_idx, v) in enumerate(sorted_vars):
             self.slide_vars_table.insertRow(r)
             shockers = v.get("shockers", [])
             hold = f"{v.get('hold_time', 3.0)}s" if v.get("hold_mode") else "—"
-            self.slide_vars_table.setItem(r, 0, QTableWidgetItem(v.get("name", "")))
+            name_item = QTableWidgetItem(v.get("name", ""))
+            name_item.setData(Qt.ItemDataRole.UserRole, config_idx)
+            self.slide_vars_table.setItem(r, 0, name_item)
             self.slide_vars_table.setItem(r, 1, QTableWidgetItem(v.get("osc_path", "")))
             self.slide_vars_table.setItem(r, 2, QTableWidgetItem(f"{v.get('threshold', 0.0):.2f}"))
             self.slide_vars_table.setItem(r, 3, QTableWidgetItem(str(len(shockers)) if shockers else "All"))
