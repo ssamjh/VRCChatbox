@@ -770,6 +770,37 @@ class ShockOSCController:
             print(f"Error processing internet shock event: {e}")
 
 
+    def send_signalr_control(self, shocker_ids, intensity, duration_ms, action_type=1):
+        """Send a control command via the live SignalR gateway (fire-and-forget).
+        action_type: 0=stop, 1=shock, 2=vibrate, 3=sound
+        duration_ms: duration in milliseconds (300–10000)
+        Returns True if the message was sent over the WebSocket.
+        """
+        if not self.signalr_connected or not self.websocket or not self.signalr_loop:
+            return False
+
+        shocks = [
+            {
+                "id": sid,
+                "type": action_type,
+                "intensity": min(100, max(0, int(intensity))),
+                "duration": max(300, min(10000, int(duration_ms))),
+            }
+            for sid in shocker_ids
+        ]
+        msg = json.dumps({"type": 1, "target": "ControlV2", "arguments": [shocks, "VRCChatbox"]}) + "\x1e"
+
+        async def _send():
+            await self.websocket.send(msg)
+
+        try:
+            future = asyncio.run_coroutine_threadsafe(_send(), self.signalr_loop)
+            future.result(timeout=2.0)
+            return True
+        except Exception as e:
+            print(f"SignalR control send error: {e}")
+            return False
+
     def test_openshock_connection(self):
         """Test OpenShock API connection"""
         token = self.config.get("openshock_token", "").strip()

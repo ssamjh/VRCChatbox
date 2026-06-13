@@ -734,17 +734,15 @@ class VRCChatboxGUI(QMainWindow):
         ec.setSpacing(8)
         ec.setContentsMargins(12, 16, 12, 12)
 
-        self.panel_table = QTableWidget(0, 7)
+        self.panel_table = QTableWidget(0, 5)
         self.panel_table.setHorizontalHeaderLabels(
-            ["Name", "Mode", "OSC Name", "Shockers", "Intensity %", "Duration (s)", "Enabled"])
+            ["Name", "Mode", "OSC Name", "Shockers", "Enabled"])
         ph = self.panel_table.horizontalHeader()
         ph.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         ph.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         ph.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         ph.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         ph.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        ph.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
-        ph.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
         self.panel_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.panel_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.panel_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -774,12 +772,11 @@ class VRCChatboxGUI(QMainWindow):
         ic.setSpacing(4)
         ref_text = (
             "Per-entry paths  (replace {OscName} with the entry's OSC Name):\n"
-            "  /avatar/parameters/ShockPanel/{OscName}/Trigger    — bool  — behaviour depends on entry Mode\n"
-            "      One-shot: rising edge fires one shock\n"
-            "      Hold: true = shock continuously, false = stop\n"
-            "      Warning: true = vibrate → random delay → shock; false = cancel\n"
-            "  /avatar/parameters/ShockPanel/{OscName}/Intensity  — float 0–1  — get/set intensity (0=0%, 1=100%)\n"
-            "  /avatar/parameters/ShockPanel/{OscName}/Duration   — float 0–1  — get/set duration (0=0.5s, 1=10s)"
+            "  …/Trigger       bool   — One-shot: rising edge fires; Hold: true=on, false=off\n"
+            "  …/IntensityMin  float 0–1  — get/set minimum intensity (0=0%, 1=100%)\n"
+            "  …/IntensityMax  float 0–1  — get/set maximum intensity (0=0%, 1=100%)\n"
+            "  …/Duration      float 0–1  — get/set duration (0=0.5s, 1=10s)\n"
+            "Intensity/Duration are bidirectional — the app echoes values back so your avatar params stay in sync."
         )
         ref_lbl = QLabel(ref_text)
         ref_lbl.setObjectName("field_label")
@@ -845,7 +842,7 @@ class VRCChatboxGUI(QMainWindow):
         self.panel_table.setRowCount(0)
         entries = self.config.get("shock_panel", {}).get("entries", [])
         shockers_cfg = self.config.get("shockosc", {}).get("shockers", {})
-        mode_labels = {"trigger": "One-shot", "hold": "Hold", "warning": "Warning"}
+        mode_labels = {"trigger": "One-shot", "hold": "Hold"}
         for i, entry in enumerate(entries):
             r = self.panel_table.rowCount()
             self.panel_table.insertRow(r)
@@ -864,9 +861,7 @@ class VRCChatboxGUI(QMainWindow):
             ]
             self.panel_table.setItem(r, 3, QTableWidgetItem(
                 ", ".join(names) if names else ("None" if not ids else f"{len(ids)} shockers")))
-            self.panel_table.setItem(r, 4, QTableWidgetItem(str(entry.get("intensity", 50))))
-            self.panel_table.setItem(r, 5, QTableWidgetItem(f"{entry.get('duration', 1.0):.1f}"))
-            self.panel_table.setItem(r, 6, QTableWidgetItem(
+            self.panel_table.setItem(r, 4, QTableWidgetItem(
                 "Yes" if entry.get("enabled", True) else "No"))
 
     def _update_shock_panel_controller(self):
@@ -1702,9 +1697,9 @@ class ShockPanelEntryDialog(QDialog):
         super().__init__(parent)
         self.config = config
         self.selected_shocker_ids = list(current.get("shocker_ids", [])) if current else []
-        self._osc_name_auto = True  # track whether osc_name is auto-derived
+        self._osc_name_auto = True
         self.setWindowTitle("Edit Entry" if current else "Add Entry")
-        self.setFixedSize(560, 530)
+        self.setFixedSize(560, 380)
         self.setModal(True)
 
         layout = QVBoxLayout(self)
@@ -1741,12 +1736,11 @@ class ShockPanelEntryDialog(QDialog):
         self.mode_combo = QComboBox()
         self.mode_combo.addItem("One-shot (trigger)", userData="trigger")
         self.mode_combo.addItem("Hold (continuous)", userData="hold")
-        self.mode_combo.addItem("Warning (vibrate → shock)", userData="warning")
         current_mode = current.get("mode", "trigger") if current else "trigger"
         self.mode_combo.setCurrentIndex(
             next((i for i in range(self.mode_combo.count())
                   if self.mode_combo.itemData(i) == current_mode), 0))
-        self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
+        self.mode_combo.currentIndexChanged.connect(self._refresh_paths_preview)
         grid.addWidget(self.mode_combo, 2, 1)
 
         grid.addWidget(_label("Shockers", "field_label"), 3, 0)
@@ -1755,42 +1749,14 @@ class ShockPanelEntryDialog(QDialog):
         grid.addWidget(self.shocker_btn, 3, 1)
         self._update_shocker_btn()
 
-        grid.addWidget(_label("Intensity %", "field_label"), 4, 0)
-        self.intensity_s = Stepper(0, 100, 1, current.get("intensity", 50) if current else 50,
-                                   spin_width=90)
-        grid.addWidget(self.intensity_s, 4, 1)
-
-        grid.addWidget(_label("Duration (s)", "field_label"), 5, 0)
-        self.duration_s = Stepper(0.5, 10.0, 0.1,
-                                  current.get("duration", 1.0) if current else 1.0,
-                                  decimals=1, spin_width=90)
-        grid.addWidget(self.duration_s, 5, 1)
-
-        # Warning delay rows — shown only in Warning mode
-        self._warn_min_lbl = _label("Warn delay min (s)", "field_label")
-        self.warn_min_s = Stepper(0.0, 60.0, 0.5,
-                                  current.get("warning_delay_min", 2.0) if current else 2.0,
-                                  decimals=1, spin_width=90)
-        self.warn_min_s.valueChanged.connect(self._clamp_warn_max)
-        grid.addWidget(self._warn_min_lbl, 6, 0)
-        grid.addWidget(self.warn_min_s, 6, 1)
-
-        self._warn_max_lbl = _label("Warn delay max (s)", "field_label")
-        self.warn_max_s = Stepper(0.0, 60.0, 0.5,
-                                  current.get("warning_delay_max", 5.0) if current else 5.0,
-                                  decimals=1, spin_width=90)
-        grid.addWidget(self._warn_max_lbl, 7, 0)
-        grid.addWidget(self.warn_max_s, 7, 1)
-
-        grid.addWidget(_label("Status", "field_label"), 8, 0)
+        grid.addWidget(_label("Status", "field_label"), 4, 0)
         self.enabled_cb = QCheckBox("Enabled")
         self.enabled_cb.setChecked(current.get("enabled", True) if current else True)
-        grid.addWidget(self.enabled_cb, 8, 1)
+        grid.addWidget(self.enabled_cb, 4, 1)
 
         layout.addLayout(grid)
         layout.addWidget(_hline())
 
-        # OSC path preview
         paths_card = QGroupBox("OSC Paths for this entry")
         pc = QVBoxLayout(paths_card)
         pc.setContentsMargins(12, 10, 12, 10)
@@ -1799,7 +1765,7 @@ class ShockPanelEntryDialog(QDialog):
         self.paths_lbl.setWordWrap(True)
         pc.addWidget(self.paths_lbl)
         layout.addWidget(paths_card)
-        self._on_mode_changed()  # sets initial visibility of warning rows + path preview
+        self._refresh_paths_preview()
 
         layout.addStretch()
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Save |
@@ -1807,14 +1773,6 @@ class ShockPanelEntryDialog(QDialog):
         btns.accepted.connect(self._validate)
         btns.rejected.connect(self.reject)
         layout.addWidget(btns)
-
-    def _on_mode_changed(self, *_):
-        is_warning = self.mode_combo.currentData() == "warning"
-        self._warn_min_lbl.setVisible(is_warning)
-        self.warn_min_s.setVisible(is_warning)
-        self._warn_max_lbl.setVisible(is_warning)
-        self.warn_max_s.setVisible(is_warning)
-        self._refresh_paths_preview()
 
     def _on_name_changed(self, text):
         if self._osc_name_auto:
@@ -1824,29 +1782,23 @@ class ShockPanelEntryDialog(QDialog):
         self._refresh_paths_preview()
 
     def _on_osc_name_changed(self, text):
-        # If user manually edits osc_name, stop auto-deriving
         auto = osc_safe_name(self.name_edit.text())
         self._osc_name_auto = (text == auto or text == "")
         self._refresh_paths_preview()
 
-    def _clamp_warn_max(self, *_):
-        if self.warn_max_s.value() < self.warn_min_s.value():
-            self.warn_max_s.setValue(self.warn_min_s.value())
-
-    def _refresh_paths_preview(self):
+    def _refresh_paths_preview(self, *_):
         raw = self.osc_name_edit.text().strip() or osc_safe_name(self.name_edit.text())
         name = osc_safe_name(raw) or "Entry"
         base = f"/avatar/parameters/ShockPanel/{name}"
-        mode = self.mode_combo.currentData() if hasattr(self, 'mode_combo') else "trigger"
         mode_hint = {
             "trigger": "rising edge → one-shot shock",
             "hold":    "true = shock continuously, false = stop",
-            "warning": "true = vibrate → random delay → shock; false = cancel",
-        }.get(mode, "")
+        }.get(self.mode_combo.currentData(), "")
         self.paths_lbl.setText(
-            f"{base}/Trigger    (bool — {mode_hint})\n"
-            f"{base}/Intensity  (float 0–1 — get/set intensity)\n"
-            f"{base}/Duration   (float 0–1 — get/set duration, 0=0.5s, 1=10s)"
+            f"{base}/Trigger       (bool — {mode_hint})\n"
+            f"{base}/IntensityMin  (float 0–1 — get/set min intensity)\n"
+            f"{base}/IntensityMax  (float 0–1 — get/set max intensity)\n"
+            f"{base}/Duration      (float 0–1 — get/set duration, 0=0.5s, 1=10s)"
         )
 
     def _update_shocker_btn(self):
@@ -1868,15 +1820,11 @@ class ShockPanelEntryDialog(QDialog):
     def get_data(self):
         raw_osc = self.osc_name_edit.text().strip() or osc_safe_name(self.name_edit.text())
         return {
-            "name":               self.name_edit.text().strip(),
-            "osc_name":           osc_safe_name(raw_osc),
-            "mode":               self.mode_combo.currentData(),
-            "shocker_ids":        self.selected_shocker_ids,
-            "intensity":          self.intensity_s.value(),
-            "duration":           round(self.duration_s.value(), 1),
-            "warning_delay_min":  round(self.warn_min_s.value(), 1),
-            "warning_delay_max":  round(self.warn_max_s.value(), 1),
-            "enabled":            self.enabled_cb.isChecked(),
+            "name":        self.name_edit.text().strip(),
+            "osc_name":    osc_safe_name(raw_osc),
+            "mode":        self.mode_combo.currentData(),
+            "shocker_ids": self.selected_shocker_ids,
+            "enabled":     self.enabled_cb.isChecked(),
         }
 
 
