@@ -99,6 +99,10 @@ def load_app_config():
         },
         "joinmymusic": {
             "sse_url": "https://joinmymusic.com/api/events"
+        },
+        "shock_panel": {
+            "enabled": False,
+            "entries": []
         }
     }
 
@@ -128,6 +132,12 @@ def load_app_config():
                     default_jmm = default_config["joinmymusic"].copy()
                     default_jmm.update(user_config.get("joinmymusic", {}))
                     merged_config["joinmymusic"] = default_jmm
+
+                # Deep merge shock_panel config
+                if "shock_panel" in default_config:
+                    default_sp = default_config["shock_panel"].copy()
+                    default_sp.update(user_config.get("shock_panel", {}))
+                    merged_config["shock_panel"] = default_sp
 
                 # Ensure messages section exists and merge with defaults
                 if "messages" not in merged_config:

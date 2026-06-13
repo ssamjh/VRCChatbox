@@ -6,6 +6,7 @@ from placeholders import get_placeholder_value, data_cache
 from boop_counter import BoopCounter
 from shockosc import ShockOSCController
 from slide import SlideController
+from shock_panel import ShockPanelController
 
 
 class VRChatMessenger:
@@ -84,6 +85,15 @@ class VRChatMessenger:
         )
         slide_config = self.app_config.get("slide", {})
         self.slide_controller.update_config(slide_config)
+
+        # Initialize Shock Panel controller
+        self.shock_panel_controller = ShockPanelController(
+            osc_client=self.client,
+            shock_controller=self.shock_controller,
+            dispatcher=self.dispatcher,
+        )
+        panel_config = self.app_config.get("shock_panel", {})
+        self.shock_panel_controller.update_config(panel_config)
 
         # Setup OSC server for listening
         self.server = osc_server.ThreadingOSCUDPServer(
@@ -455,6 +465,13 @@ class VRChatMessenger:
         if hasattr(self, 'slide_controller'):
             self.slide_controller.update_config(slide_config)
 
+    def update_shock_panel_config(self, panel_config):
+        """Update Shock Panel configuration"""
+        self.app_config["shock_panel"] = panel_config
+        save_app_config(self.app_config)
+        if hasattr(self, 'shock_panel_controller'):
+            self.shock_panel_controller.update_config(panel_config)
+
     def update_app_config(self, new_config):
         """Update full app configuration including messages"""
         self.app_config.update(new_config)
@@ -475,6 +492,10 @@ class VRChatMessenger:
         # Stop slide polling
         if hasattr(self, 'slide_controller'):
             self.slide_controller.stop_polling()
+
+        # Stop shock panel holds
+        if hasattr(self, 'shock_panel_controller'):
+            self.shock_panel_controller.cleanup()
 
         # Stop OSC server
         if hasattr(self, 'server'):

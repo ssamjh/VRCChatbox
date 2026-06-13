@@ -1,4 +1,5 @@
 import sys
+import uuid
 import queue
 import threading
 from datetime import datetime
@@ -16,6 +17,7 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject
 from PyQt6.QtGui import QPalette, QColor
 
 from config import load_app_config, save_app_config
+from shock_panel import osc_safe_name
 
 # ── Theme ─────────────────────────────────────────────────────────────────────
 BG       = "#1C1B1F"
@@ -308,10 +310,11 @@ class VRCChatboxGUI(QMainWindow):
         self._nav_group.setExclusive(True)
 
         pages = [
-            ("  General",     self._build_general_page()),
-            ("  ShockOSC",    self._build_shockosc_page()),
-            ("  Slide",       self._build_slide_page()),
-            ("  OSC Monitor", self._build_osc_monitor_page()),
+            ("  General",      self._build_general_page()),
+            ("  ShockOSC",     self._build_shockosc_page()),
+            ("  Slide",        self._build_slide_page()),
+            ("  Shock Panel",  self._build_shock_panel_page()),
+            ("  OSC Monitor",  self._build_osc_monitor_page()),
         ]
         for i, (label, page) in enumerate(pages):
             btn = QPushButton(label)
@@ -706,6 +709,169 @@ class VRCChatboxGUI(QMainWindow):
 
         self.refresh_slide_variables_display()
         return page
+
+    # ── Shock Panel page ───────────────────────────────────────────────────
+
+    def _build_shock_panel_page(self):
+        sp = self.config.get("shock_panel", {})
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(12)
+
+        layout.addWidget(_label("Shock Panel", "section_title"))
+        layout.addWidget(_hline())
+
+        # Enable toggle
+        self.panel_enabled_cb = QCheckBox("Enable Shock Panel")
+        self.panel_enabled_cb.setChecked(sp.get("enabled", False))
+        self.panel_enabled_cb.toggled.connect(self.on_shock_panel_settings_change)
+        layout.addWidget(self.panel_enabled_cb)
+
+        # Entries table
+        entries_card = QGroupBox("Entries")
+        ec = QVBoxLayout(entries_card)
+        ec.setSpacing(8)
+        ec.setContentsMargins(12, 16, 12, 12)
+
+        self.panel_table = QTableWidget(0, 7)
+        self.panel_table.setHorizontalHeaderLabels(
+            ["Name", "Mode", "OSC Name", "Shockers", "Intensity %", "Duration (s)", "Enabled"])
+        ph = self.panel_table.horizontalHeader()
+        ph.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        ph.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        ph.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        ph.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        ph.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        ph.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        ph.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
+        self.panel_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.panel_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.panel_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.panel_table.setAlternatingRowColors(True)
+        ec.addWidget(self.panel_table)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        add_btn = QPushButton("Add")
+        add_btn.clicked.connect(self.add_panel_entry)
+        edit_btn = QPushButton("Edit")
+        edit_btn.clicked.connect(self.edit_panel_entry)
+        remove_btn = QPushButton("Remove")
+        remove_btn.clicked.connect(self.remove_panel_entry)
+        btn_row.addWidget(add_btn)
+        btn_row.addWidget(edit_btn)
+        btn_row.addWidget(remove_btn)
+        btn_row.addStretch()
+        ec.addLayout(btn_row)
+
+        layout.addWidget(entries_card, stretch=1)
+
+        # OSC path reference card
+        info_card = QGroupBox("OSC Path Reference")
+        ic = QVBoxLayout(info_card)
+        ic.setContentsMargins(12, 12, 12, 12)
+        ic.setSpacing(4)
+        ref_text = (
+            "Per-entry paths  (replace {OscName} with the entry's OSC Name):\n"
+            "  /avatar/parameters/ShockPanel/{OscName}/Trigger    — bool  — behaviour depends on entry Mode\n"
+            "      One-shot: rising edge fires one shock\n"
+            "      Hold: true = shock continuously, false = stop\n"
+            "      Warning: true = vibrate → random delay → shock; false = cancel\n"
+            "  /avatar/parameters/ShockPanel/{OscName}/Intensity  — float 0–1  — get/set intensity (0=0%, 1=100%)\n"
+            "  /avatar/parameters/ShockPanel/{OscName}/Duration   — float 0–1  — get/set duration (0=0.5s, 1=10s)"
+        )
+        ref_lbl = QLabel(ref_text)
+        ref_lbl.setObjectName("field_label")
+        ref_lbl.setWordWrap(True)
+        ic.addWidget(ref_lbl)
+        layout.addWidget(info_card)
+
+        self.refresh_panel_display()
+        return page
+
+    def on_shock_panel_settings_change(self, *_):
+        self.config.setdefault("shock_panel", {})["enabled"] = self.panel_enabled_cb.isChecked()
+        save_app_config(self.config)
+        self._update_shock_panel_controller()
+        s = "enabled" if self.config["shock_panel"]["enabled"] else "disabled"
+        self._set_status(f"Shock Panel {s}")
+
+    def add_panel_entry(self):
+        dlg = ShockPanelEntryDialog(self, None, self.config)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            data = dlg.get_data()
+            data["id"] = str(uuid.uuid4())
+            self.config.setdefault("shock_panel", {}).setdefault("entries", []).append(data)
+            save_app_config(self.config)
+            self.refresh_panel_display()
+            self._update_shock_panel_controller()
+            self._set_status("Entry added")
+
+    def edit_panel_entry(self):
+        row = self.panel_table.currentRow()
+        if row < 0:
+            QMessageBox.warning(self, "No Selection", "Select an entry to edit."); return
+        idx = self.panel_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+        entries = self.config.get("shock_panel", {}).get("entries", [])
+        if idx >= len(entries): return
+        dlg = ShockPanelEntryDialog(self, entries[idx], self.config)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            data = dlg.get_data()
+            data["id"] = entries[idx]["id"]
+            entries[idx] = data
+            save_app_config(self.config)
+            self.refresh_panel_display()
+            self._update_shock_panel_controller()
+            self._set_status("Entry updated")
+
+    def remove_panel_entry(self):
+        row = self.panel_table.currentRow()
+        if row < 0:
+            QMessageBox.warning(self, "No Selection", "Select an entry to remove."); return
+        if QMessageBox.question(self, "Confirm", "Remove this entry?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        ) != QMessageBox.StandardButton.Yes: return
+        idx = self.panel_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+        entries = self.config.get("shock_panel", {}).get("entries", [])
+        if idx < len(entries):
+            del entries[idx]
+            save_app_config(self.config)
+            self.refresh_panel_display()
+            self._update_shock_panel_controller()
+            self._set_status("Entry removed")
+
+    def refresh_panel_display(self):
+        self.panel_table.setRowCount(0)
+        entries = self.config.get("shock_panel", {}).get("entries", [])
+        shockers_cfg = self.config.get("shockosc", {}).get("shockers", {})
+        mode_labels = {"trigger": "One-shot", "hold": "Hold", "warning": "Warning"}
+        for i, entry in enumerate(entries):
+            r = self.panel_table.rowCount()
+            self.panel_table.insertRow(r)
+            name_item = QTableWidgetItem(entry.get("name", ""))
+            name_item.setData(Qt.ItemDataRole.UserRole, i)
+            self.panel_table.setItem(r, 0, name_item)
+            self.panel_table.setItem(r, 1, QTableWidgetItem(
+                mode_labels.get(entry.get("mode", "trigger"), "One-shot")))
+            self.panel_table.setItem(r, 2, QTableWidgetItem(
+                osc_safe_name(entry.get("osc_name") or entry.get("name", ""))))
+            ids = entry.get("shocker_ids", [])
+            names = [
+                shockers_cfg[sid].get("name", sid[:8]) if isinstance(shockers_cfg.get(sid), dict)
+                else sid[:8]
+                for sid in ids if sid in shockers_cfg
+            ]
+            self.panel_table.setItem(r, 3, QTableWidgetItem(
+                ", ".join(names) if names else ("None" if not ids else f"{len(ids)} shockers")))
+            self.panel_table.setItem(r, 4, QTableWidgetItem(str(entry.get("intensity", 50))))
+            self.panel_table.setItem(r, 5, QTableWidgetItem(f"{entry.get('duration', 1.0):.1f}"))
+            self.panel_table.setItem(r, 6, QTableWidgetItem(
+                "Yes" if entry.get("enabled", True) else "No"))
+
+    def _update_shock_panel_controller(self):
+        if self.messenger and hasattr(self.messenger, 'update_shock_panel_config'):
+            self.messenger.update_shock_panel_config(self.config.get("shock_panel", {}))
 
     # ── OSC Monitor page ───────────────────────────────────────────────────
 
@@ -1529,6 +1695,189 @@ class ShockerSelectionDialog(QDialog):
 
     def get_selected(self):
         return [sid for sid, cb in self._cbs.items() if cb.isChecked()]
+
+
+class ShockPanelEntryDialog(QDialog):
+    def __init__(self, parent, current, config):
+        super().__init__(parent)
+        self.config = config
+        self.selected_shocker_ids = list(current.get("shocker_ids", [])) if current else []
+        self._osc_name_auto = True  # track whether osc_name is auto-derived
+        self.setWindowTitle("Edit Entry" if current else "Add Entry")
+        self.setFixedSize(560, 530)
+        self.setModal(True)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(32, 32, 32, 24)
+        layout.setSpacing(16)
+
+        grid = QGridLayout()
+        grid.setSpacing(14)
+        grid.setColumnMinimumWidth(0, 140)
+        grid.setColumnStretch(1, 1)
+
+        grid.addWidget(_label("Name", "field_label"), 0, 0)
+        self.name_edit = QLineEdit()
+        if current:
+            self.name_edit.setText(current.get("name", ""))
+        self.name_edit.textChanged.connect(self._on_name_changed)
+        grid.addWidget(self.name_edit, 0, 1)
+
+        grid.addWidget(_label("OSC Name", "field_label"), 1, 0)
+        self.osc_name_edit = QLineEdit()
+        self.osc_name_edit.setPlaceholderText("auto-derived from Name")
+        if current:
+            stored = current.get("osc_name", "")
+            auto = osc_safe_name(current.get("name", ""))
+            if stored and stored != auto:
+                self._osc_name_auto = False
+                self.osc_name_edit.setText(stored)
+            else:
+                self.osc_name_edit.setText(auto)
+        self.osc_name_edit.textChanged.connect(self._on_osc_name_changed)
+        grid.addWidget(self.osc_name_edit, 1, 1)
+
+        grid.addWidget(_label("Mode", "field_label"), 2, 0)
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItem("One-shot (trigger)", userData="trigger")
+        self.mode_combo.addItem("Hold (continuous)", userData="hold")
+        self.mode_combo.addItem("Warning (vibrate → shock)", userData="warning")
+        current_mode = current.get("mode", "trigger") if current else "trigger"
+        self.mode_combo.setCurrentIndex(
+            next((i for i in range(self.mode_combo.count())
+                  if self.mode_combo.itemData(i) == current_mode), 0))
+        self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
+        grid.addWidget(self.mode_combo, 2, 1)
+
+        grid.addWidget(_label("Shockers", "field_label"), 3, 0)
+        self.shocker_btn = QPushButton("Select Shockers (All)")
+        self.shocker_btn.clicked.connect(self._pick_shockers)
+        grid.addWidget(self.shocker_btn, 3, 1)
+        self._update_shocker_btn()
+
+        grid.addWidget(_label("Intensity %", "field_label"), 4, 0)
+        self.intensity_s = Stepper(0, 100, 1, current.get("intensity", 50) if current else 50,
+                                   spin_width=90)
+        grid.addWidget(self.intensity_s, 4, 1)
+
+        grid.addWidget(_label("Duration (s)", "field_label"), 5, 0)
+        self.duration_s = Stepper(0.5, 10.0, 0.1,
+                                  current.get("duration", 1.0) if current else 1.0,
+                                  decimals=1, spin_width=90)
+        grid.addWidget(self.duration_s, 5, 1)
+
+        # Warning delay rows — shown only in Warning mode
+        self._warn_min_lbl = _label("Warn delay min (s)", "field_label")
+        self.warn_min_s = Stepper(0.0, 60.0, 0.5,
+                                  current.get("warning_delay_min", 2.0) if current else 2.0,
+                                  decimals=1, spin_width=90)
+        self.warn_min_s.valueChanged.connect(self._clamp_warn_max)
+        grid.addWidget(self._warn_min_lbl, 6, 0)
+        grid.addWidget(self.warn_min_s, 6, 1)
+
+        self._warn_max_lbl = _label("Warn delay max (s)", "field_label")
+        self.warn_max_s = Stepper(0.0, 60.0, 0.5,
+                                  current.get("warning_delay_max", 5.0) if current else 5.0,
+                                  decimals=1, spin_width=90)
+        grid.addWidget(self._warn_max_lbl, 7, 0)
+        grid.addWidget(self.warn_max_s, 7, 1)
+
+        grid.addWidget(_label("Status", "field_label"), 8, 0)
+        self.enabled_cb = QCheckBox("Enabled")
+        self.enabled_cb.setChecked(current.get("enabled", True) if current else True)
+        grid.addWidget(self.enabled_cb, 8, 1)
+
+        layout.addLayout(grid)
+        layout.addWidget(_hline())
+
+        # OSC path preview
+        paths_card = QGroupBox("OSC Paths for this entry")
+        pc = QVBoxLayout(paths_card)
+        pc.setContentsMargins(12, 10, 12, 10)
+        self.paths_lbl = QLabel()
+        self.paths_lbl.setObjectName("field_label")
+        self.paths_lbl.setWordWrap(True)
+        pc.addWidget(self.paths_lbl)
+        layout.addWidget(paths_card)
+        self._on_mode_changed()  # sets initial visibility of warning rows + path preview
+
+        layout.addStretch()
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Save |
+                                QDialogButtonBox.StandardButton.Cancel)
+        btns.accepted.connect(self._validate)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def _on_mode_changed(self, *_):
+        is_warning = self.mode_combo.currentData() == "warning"
+        self._warn_min_lbl.setVisible(is_warning)
+        self.warn_min_s.setVisible(is_warning)
+        self._warn_max_lbl.setVisible(is_warning)
+        self.warn_max_s.setVisible(is_warning)
+        self._refresh_paths_preview()
+
+    def _on_name_changed(self, text):
+        if self._osc_name_auto:
+            self.osc_name_edit.blockSignals(True)
+            self.osc_name_edit.setText(osc_safe_name(text))
+            self.osc_name_edit.blockSignals(False)
+        self._refresh_paths_preview()
+
+    def _on_osc_name_changed(self, text):
+        # If user manually edits osc_name, stop auto-deriving
+        auto = osc_safe_name(self.name_edit.text())
+        self._osc_name_auto = (text == auto or text == "")
+        self._refresh_paths_preview()
+
+    def _clamp_warn_max(self, *_):
+        if self.warn_max_s.value() < self.warn_min_s.value():
+            self.warn_max_s.setValue(self.warn_min_s.value())
+
+    def _refresh_paths_preview(self):
+        raw = self.osc_name_edit.text().strip() or osc_safe_name(self.name_edit.text())
+        name = osc_safe_name(raw) or "Entry"
+        base = f"/avatar/parameters/ShockPanel/{name}"
+        mode = self.mode_combo.currentData() if hasattr(self, 'mode_combo') else "trigger"
+        mode_hint = {
+            "trigger": "rising edge → one-shot shock",
+            "hold":    "true = shock continuously, false = stop",
+            "warning": "true = vibrate → random delay → shock; false = cancel",
+        }.get(mode, "")
+        self.paths_lbl.setText(
+            f"{base}/Trigger    (bool — {mode_hint})\n"
+            f"{base}/Intensity  (float 0–1 — get/set intensity)\n"
+            f"{base}/Duration   (float 0–1 — get/set duration, 0=0.5s, 1=10s)"
+        )
+
+    def _update_shocker_btn(self):
+        n = len(self.selected_shocker_ids)
+        self.shocker_btn.setText(
+            f"Select Shockers ({n} selected)" if n else "Select Shockers (All)")
+
+    def _pick_shockers(self):
+        dlg = ShockerSelectionDialog(self, self.config, self.selected_shocker_ids)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.selected_shocker_ids = dlg.get_selected()
+            self._update_shocker_btn()
+
+    def _validate(self):
+        if not self.name_edit.text().strip():
+            QMessageBox.critical(self, "Error", "Name cannot be empty."); return
+        self.accept()
+
+    def get_data(self):
+        raw_osc = self.osc_name_edit.text().strip() or osc_safe_name(self.name_edit.text())
+        return {
+            "name":               self.name_edit.text().strip(),
+            "osc_name":           osc_safe_name(raw_osc),
+            "mode":               self.mode_combo.currentData(),
+            "shocker_ids":        self.selected_shocker_ids,
+            "intensity":          self.intensity_s.value(),
+            "duration":           round(self.duration_s.value(), 1),
+            "warning_delay_min":  round(self.warn_min_s.value(), 1),
+            "warning_delay_max":  round(self.warn_max_s.value(), 1),
+            "enabled":            self.enabled_cb.isChecked(),
+        }
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
