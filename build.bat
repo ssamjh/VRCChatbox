@@ -13,7 +13,7 @@ taskkill /f /im VRCChatbox.exe >nul 2>&1
 
 echo Installing / updating dependencies...
 %VENV_DIR%\Scripts\python.exe -m pip install --upgrade pip --quiet
-%VENV_DIR%\Scripts\pip install python-osc PyQt6 requests websockets pyinstaller --quiet
+%VENV_DIR%\Scripts\pip install python-osc PyQt6 requests websockets pyinstaller bleak --quiet
 if errorlevel 1 ( echo Dependency install failed & pause & exit /b 1 )
 
 echo Building...
@@ -23,7 +23,9 @@ echo Building...
     --name VRCChatbox ^
     --noconfirm ^
     --collect-all websockets ^
+    --collect-all bleak ^
     --hidden-import PyQt6.QtSvg ^
+    --hidden-import bleak.backends.winrt ^
     app.py
 if errorlevel 1 ( echo Build failed & pause & exit /b 1 )
 

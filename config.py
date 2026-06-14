@@ -53,6 +53,11 @@ def get_default_message_config():
                 "{jmm_song}",
             ],
         },
+        "bpm": {
+            "messages": [
+                "{bpm} BPM",
+            ],
+        },
         "shock_info": {
             "messages": [
                 "⚡ Shock: {shock_intensity}% {shock_duration} ({shock_group})",
@@ -103,6 +108,11 @@ def load_app_config():
         "shock_panel": {
             "enabled": False,
             "entries": []
+        },
+        "bpm": {
+            "enabled": False,
+            "device_address": "",
+            "device_name": "",
         }
     }
 
@@ -138,6 +148,12 @@ def load_app_config():
                     default_sp = default_config["shock_panel"].copy()
                     default_sp.update(user_config.get("shock_panel", {}))
                     merged_config["shock_panel"] = default_sp
+
+                # Deep merge bpm config
+                if "bpm" in default_config:
+                    default_bpm = default_config["bpm"].copy()
+                    default_bpm.update(user_config.get("bpm", {}))
+                    merged_config["bpm"] = default_bpm
 
                 # Ensure messages section exists and merge with defaults
                 if "messages" not in merged_config:

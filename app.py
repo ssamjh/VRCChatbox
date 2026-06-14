@@ -3,6 +3,7 @@ import time
 import threading
 from config import message_config, load_app_config, save_app_config, reload_message_config
 from placeholders import get_placeholder_value, data_cache
+from bpm import bpm_monitor
 from boop_counter import BoopCounter
 from shockosc import ShockOSCController
 from slide import SlideController
@@ -22,6 +23,7 @@ class VRChatMessenger:
 
         # Simple boop display flag
         self.show_boops = False
+        self._last_bpm_connected = False
 
         # Load app configuration
         self.app_config = load_app_config()
@@ -153,6 +155,7 @@ class VRChatMessenger:
         # Define the display order
         display_order = [
             "time",
+            "bpm",
             "boops",
             "shock_info",  # Local shock info has highest priority
             "internet_shock_info",  # Internet shock info second priority
@@ -161,10 +164,14 @@ class VRChatMessenger:
             "joinmymusic_song",
         ]
 
-        # Always update time message first
+        # Always refresh live-value messages before sending
         if "time" in self.active_messages:
             self.active_messages["time"]["message"] = self._format_message(
                 message_config["time"]["messages"][0]
+            )
+        if "bpm" in self.active_messages:
+            self.active_messages["bpm"]["message"] = self._format_message(
+                message_config["bpm"]["messages"][0]
             )
 
         active_lines = []
@@ -219,6 +226,14 @@ class VRChatMessenger:
                 self.show_boops = False
                 # Mark this as a song change update (will be blocked during shock)
                 self.request_display_update(from_song_change=True)
+
+            # Refresh display when BPM connection state changes or while connected
+            bpm_connected = bpm_monitor.is_connected()
+            if bpm_connected != self._last_bpm_connected:
+                self._last_bpm_connected = bpm_connected
+                self.request_display_update()
+            elif bpm_connected:
+                self.request_display_update()
 
             time.sleep(5)  # Check every 5 seconds
 
@@ -570,6 +585,10 @@ class VRChatMessenger:
                 if not jmm_data["metadata"].get("song"):
                     return False
             return True
+
+        # BPM is shown only when the heart rate monitor is connected
+        if category == "bpm":
+            return bpm_monitor.is_connected()
 
         # Time is always shown
         if category == "time":

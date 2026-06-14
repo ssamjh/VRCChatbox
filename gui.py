@@ -18,6 +18,7 @@ from PyQt6.QtGui import QPalette, QColor
 
 from config import load_app_config, save_app_config
 from shock_panel import osc_safe_name
+from bpm import bpm_monitor, BLEAK_AVAILABLE
 
 # ── Theme ─────────────────────────────────────────────────────────────────────
 BG       = "#1C1B1F"
@@ -314,6 +315,7 @@ class VRCChatboxGUI(QMainWindow):
             ("  ShockOSC",     self._build_shockosc_page()),
             ("  Slide",        self._build_slide_page()),
             ("  Shock Panel",  self._build_shock_panel_page()),
+            ("  BPM",          self._build_bpm_page()),
             ("  OSC Monitor",  self._build_osc_monitor_page()),
         ]
         for i, (label, page) in enumerate(pages):
@@ -867,6 +869,185 @@ class VRCChatboxGUI(QMainWindow):
     def _update_shock_panel_controller(self):
         if self.messenger and hasattr(self.messenger, 'update_shock_panel_config'):
             self.messenger.update_shock_panel_config(self.config.get("shock_panel", {}))
+
+    # ── BPM page ───────────────────────────────────────────────────────────
+
+    def _build_bpm_page(self):
+        bm = self.config.get("bpm", {})
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setSpacing(20)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        layout.addWidget(_label("BPM Monitor", "section_title"))
+        layout.addWidget(_hline())
+
+        self.bpm_enabled_cb = QCheckBox("Enable BPM Monitor")
+        self.bpm_enabled_cb.setChecked(bm.get("enabled", False))
+        self.bpm_enabled_cb.toggled.connect(self._on_bpm_enabled_change)
+        layout.addWidget(self.bpm_enabled_cb)
+
+        body = QHBoxLayout()
+        body.setSpacing(24)
+        layout.addLayout(body)
+
+        # ── Left: live display ─────────────────────────────────────────────
+        left = QVBoxLayout()
+        left.setSpacing(16)
+        body.addLayout(left, stretch=1)
+
+        display_card = QGroupBox("Live BPM")
+        dc = QVBoxLayout(display_card)
+        dc.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        dc.setContentsMargins(20, 24, 20, 20)
+        dc.setSpacing(4)
+
+        self._bpm_display = QLabel("--")
+        self._bpm_display.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._bpm_display.setStyleSheet(
+            f"color: {PRIMARY}; font-size: 72pt; font-weight: bold; background: transparent;")
+        dc.addWidget(self._bpm_display)
+
+        unit_lbl = QLabel("BPM")
+        unit_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        unit_lbl.setObjectName("field_label")
+        unit_lbl.setStyleSheet("font-size: 14pt; background: transparent;")
+        dc.addWidget(unit_lbl)
+
+        self._bpm_status_lbl = QLabel(bpm_monitor.get_status())
+        self._bpm_status_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._bpm_status_lbl.setObjectName("field_label")
+        dc.addWidget(self._bpm_status_lbl)
+
+        left.addWidget(display_card)
+
+        info_card = QGroupBox("Placeholder")
+        ic = QVBoxLayout(info_card)
+        ic.setContentsMargins(16, 16, 16, 16)
+        ic.addWidget(_label(
+            "Use {bpm} in message templates to display your current heart rate.",
+            "field_label"))
+        left.addWidget(info_card)
+        left.addStretch()
+
+        # ── Right: device management ───────────────────────────────────────
+        right = QVBoxLayout()
+        right.setSpacing(16)
+        body.addLayout(right, stretch=1)
+
+        device_card = QGroupBox("Device")
+        dvc = QVBoxLayout(device_card)
+        dvc.setSpacing(12)
+        dvc.setContentsMargins(20, 24, 20, 20)
+
+        if not BLEAK_AVAILABLE:
+            dvc.addWidget(_label(
+                "bleak library not installed.\nRun:  pip install bleak",
+                "field_label"))
+        else:
+            scan_row = QHBoxLayout()
+            self._bpm_scan_btn = QPushButton("Scan for Devices")
+            self._bpm_scan_btn.setFixedWidth(180)
+            self._bpm_scan_btn.clicked.connect(self._bpm_scan)
+            scan_row.addWidget(self._bpm_scan_btn)
+            scan_row.addStretch()
+            dvc.addLayout(scan_row)
+
+            dvc.addWidget(_label("Discovered devices:", "field_label"))
+            self._bpm_device_combo = QComboBox()
+            saved_addr = bm.get("device_address", "")
+            saved_name = bm.get("device_name", "")
+            if saved_addr:
+                display = f"{saved_name} ({saved_addr})" if saved_name else saved_addr
+                self._bpm_device_combo.addItem(display, userData=(saved_name, saved_addr))
+            dvc.addWidget(self._bpm_device_combo)
+
+            conn_row = QHBoxLayout()
+            self._bpm_connect_btn = QPushButton("Connect")
+            self._bpm_connect_btn.setFixedWidth(120)
+            self._bpm_connect_btn.clicked.connect(self._bpm_connect)
+            self._bpm_disconnect_btn = QPushButton("Disconnect")
+            self._bpm_disconnect_btn.setFixedWidth(120)
+            self._bpm_disconnect_btn.clicked.connect(self._bpm_disconnect)
+            self._bpm_disconnect_btn.setEnabled(False)
+            conn_row.addWidget(self._bpm_connect_btn)
+            conn_row.addWidget(self._bpm_disconnect_btn)
+            conn_row.addStretch()
+            dvc.addLayout(conn_row)
+
+        right.addWidget(device_card)
+        right.addStretch()
+
+        # Live update timer (always runs)
+        self._bpm_ui_timer = QTimer()
+        self._bpm_ui_timer.setInterval(1000)
+        self._bpm_ui_timer.timeout.connect(self._bpm_ui_tick)
+        self._bpm_ui_timer.start()
+
+        # Auto-connect if enabled and device address saved
+        if bm.get("enabled", False) and bm.get("device_address"):
+            bpm_monitor.connect(bm["device_address"])
+
+        return page
+
+    def _bpm_ui_tick(self):
+        if not hasattr(self, '_bpm_display'):
+            return
+        bpm = bpm_monitor.get_bpm()
+        self._bpm_display.setText(str(bpm) if bpm else "--")
+        self._bpm_status_lbl.setText(bpm_monitor.get_status())
+        if BLEAK_AVAILABLE and hasattr(self, '_bpm_connect_btn'):
+            connected = bpm_monitor.is_connected()
+            self._bpm_connect_btn.setEnabled(not connected)
+            self._bpm_disconnect_btn.setEnabled(connected)
+
+    def _bpm_scan(self):
+        self._bpm_scan_btn.setEnabled(False)
+        self._bpm_scan_btn.setText("Scanning…")
+        self._bpm_device_combo.clear()
+
+        def on_done(devices):
+            self._bridge.run_in_main(lambda d=devices: self._bpm_scan_done(d))
+
+        bpm_monitor.scan(on_done)
+
+    def _bpm_scan_done(self, devices):
+        self._bpm_scan_btn.setEnabled(True)
+        self._bpm_scan_btn.setText("Scan for Devices")
+        self._bpm_device_combo.clear()
+        for name, addr in devices:
+            self._bpm_device_combo.addItem(f"{name} ({addr})", userData=(name, addr))
+        if not devices:
+            self._set_status("No HR devices found nearby")
+
+    def _bpm_connect(self):
+        if not hasattr(self, '_bpm_device_combo'):
+            return
+        data = self._bpm_device_combo.currentData()
+        if not data:
+            return
+        name, addr = data
+        self.config.setdefault("bpm", {}).update({
+            "device_address": addr,
+            "device_name": name,
+        })
+        save_app_config(self.config)
+        bpm_monitor.connect(addr)
+
+    def _bpm_disconnect(self):
+        bpm_monitor.disconnect()
+
+    def _on_bpm_enabled_change(self, checked):
+        self.config.setdefault("bpm", {})["enabled"] = checked
+        save_app_config(self.config)
+        if checked:
+            addr = self.config.get("bpm", {}).get("device_address", "")
+            if addr:
+                bpm_monitor.connect(addr)
+        else:
+            bpm_monitor.disconnect()
+        self._set_status(f"BPM Monitor {'enabled' if checked else 'disabled'}")
 
     # ── OSC Monitor page ───────────────────────────────────────────────────
 

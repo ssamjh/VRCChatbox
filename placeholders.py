@@ -5,6 +5,8 @@ from datetime import datetime
 
 import requests
 
+from bpm import bpm_monitor
+
 
 class DataCache:
     def __init__(self):
@@ -160,5 +162,9 @@ def get_placeholder_value(placeholder):
     if placeholder == "internet_shock_duration":
         duration_ms = data_cache.get_internet_shock_data()["duration"]
         return f"{duration_ms/1000:.1f}s" if duration_ms else "0s"
+
+    if placeholder == "bpm":
+        bpm = bpm_monitor.get_bpm()
+        return str(bpm) if bpm else "--"
 
     return f"Error: {placeholder}"
