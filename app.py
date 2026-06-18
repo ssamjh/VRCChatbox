@@ -94,6 +94,7 @@ class VRChatMessenger:
             shock_controller=self.shock_controller,
             dispatcher=self.dispatcher,
         )
+        self.shock_panel_controller.on_state_change = self._on_shock_panel_state_change
         panel_config = self.app_config.get("shock_panel", {})
         self.shock_panel_controller.update_config(panel_config)
 
@@ -486,6 +487,14 @@ class VRChatMessenger:
         save_app_config(self.app_config)
         if hasattr(self, 'shock_panel_controller'):
             self.shock_panel_controller.update_config(panel_config)
+            # This path is only hit on explicit UI changes, so it's safe to push
+            # our values to the avatar here (startup uses update_config directly).
+            self.shock_panel_controller.broadcast_all()
+
+    def _on_shock_panel_state_change(self):
+        """Persist shock panel state changed via OSC (global intensities, per-entry enabled)."""
+        self.app_config["shock_panel"] = self.shock_panel_controller.config
+        save_app_config(self.app_config)
 
     def update_app_config(self, new_config):
         """Update full app configuration including messages"""

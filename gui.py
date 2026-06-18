@@ -730,6 +730,32 @@ class VRCChatboxGUI(QMainWindow):
         self.panel_enabled_cb.toggled.connect(self.on_shock_panel_settings_change)
         layout.addWidget(self.panel_enabled_cb)
 
+        # Global intensity / duration — shared by every entry, kept live in sync
+        # with the avatar (changing either side updates the other).
+        globals_card = QGroupBox("Global Intensity / Duration")
+        gg = QGridLayout(globals_card)
+        gg.setSpacing(8)
+        gg.setContentsMargins(12, 16, 12, 12)
+        gg.setColumnMinimumWidth(0, 130)
+        gg.setColumnMinimumWidth(2, 130)
+
+        gg.addWidget(_label("Intensity min %", "field_label"), 0, 0)
+        self.panel_min_spinbox = Stepper(0, 100, 5, sp.get("intensity_min", 20), spin_width=90)
+        self.panel_min_spinbox.valueChanged.connect(self.on_panel_globals_change)
+        gg.addWidget(self.panel_min_spinbox, 0, 1)
+
+        gg.addWidget(_label("Intensity max %", "field_label"), 0, 2)
+        self.panel_max_spinbox = Stepper(0, 100, 5, sp.get("intensity_max", 80), spin_width=90)
+        self.panel_max_spinbox.valueChanged.connect(self.on_panel_globals_change)
+        gg.addWidget(self.panel_max_spinbox, 0, 3)
+
+        gg.addWidget(_label("Duration (s)", "field_label"), 1, 0)
+        self.panel_duration_spinbox = Stepper(0.5, 10.0, 0.5, sp.get("duration", 1.0), decimals=1, spin_width=90)
+        self.panel_duration_spinbox.valueChanged.connect(self.on_panel_globals_change)
+        gg.addWidget(self.panel_duration_spinbox, 1, 1)
+
+        layout.addWidget(globals_card)
+
         # Entries table
         entries_card = QGroupBox("Entries")
         ec = QVBoxLayout(entries_card)
@@ -773,12 +799,14 @@ class VRCChatboxGUI(QMainWindow):
         ic.setContentsMargins(12, 12, 12, 12)
         ic.setSpacing(4)
         ref_text = (
+            "Global paths  (shared by every entry):\n"
+            "  /avatar/parameters/ShockPanel/IntensityMin  float 0–1  — get/set minimum intensity (0=0%, 1=100%)\n"
+            "  /avatar/parameters/ShockPanel/IntensityMax  float 0–1  — get/set maximum intensity (0=0%, 1=100%)\n"
+            "  /avatar/parameters/ShockPanel/Duration      float 0–1  — get/set duration (0=0.5s, 1=10s)\n"
             "Per-entry paths  (replace {OscName} with the entry's OSC Name):\n"
-            "  …/Trigger       bool   — One-shot: rising edge fires; Hold: true=on, false=off\n"
-            "  …/IntensityMin  float 0–1  — get/set minimum intensity (0=0%, 1=100%)\n"
-            "  …/IntensityMax  float 0–1  — get/set maximum intensity (0=0%, 1=100%)\n"
-            "  …/Duration      float 0–1  — get/set duration (0=0.5s, 1=10s)\n"
-            "Intensity/Duration are bidirectional — the app echoes values back so your avatar params stay in sync."
+            "  …/{OscName}/Trigger  bool  — One-shot: rising edge fires; Hold: true=on, false=off\n"
+            "  …/{OscName}/Enabled  bool  — get/set whether this entry is active\n"
+            "All get/set paths are bidirectional — the app echoes values back so your avatar params stay in sync."
         )
         ref_lbl = QLabel(ref_text)
         ref_lbl.setObjectName("field_label")
@@ -787,6 +815,14 @@ class VRCChatboxGUI(QMainWindow):
         layout.addWidget(info_card)
 
         self.refresh_panel_display()
+
+        # Poll the controller so the UI reflects values changed from the avatar.
+        self._panel_syncing = False
+        self._panel_ui_timer = QTimer()
+        self._panel_ui_timer.setInterval(500)
+        self._panel_ui_timer.timeout.connect(self._panel_ui_tick)
+        self._panel_ui_timer.start()
+
         return page
 
     def on_shock_panel_settings_change(self, *_):
@@ -842,6 +878,7 @@ class VRCChatboxGUI(QMainWindow):
 
     def refresh_panel_display(self):
         self.panel_table.setRowCount(0)
+        self._panel_enabled_cbs = []
         entries = self.config.get("shock_panel", {}).get("entries", [])
         shockers_cfg = self.config.get("shockosc", {}).get("shockers", {})
         mode_labels = {"trigger": "One-shot", "hold": "Hold"}
@@ -863,8 +900,77 @@ class VRCChatboxGUI(QMainWindow):
             ]
             self.panel_table.setItem(r, 3, QTableWidgetItem(
                 ", ".join(names) if names else ("None" if not ids else f"{len(ids)} shockers")))
-            self.panel_table.setItem(r, 4, QTableWidgetItem(
-                "Yes" if entry.get("enabled", True) else "No"))
+
+            # Enabled toggle — flips the entry on/off and syncs the bool to VRChat.
+            eid = entry.get("id")
+            cb = QCheckBox()
+            cb.setChecked(entry.get("enabled", True))
+            cb.setProperty("entry_id", eid)
+            cb.toggled.connect(lambda checked, _eid=eid: self._on_panel_enabled_toggled(_eid, checked))
+            cell = QWidget()
+            cell_layout = QHBoxLayout(cell)
+            cell_layout.setContentsMargins(0, 0, 0, 0)
+            cell_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            cell_layout.addWidget(cb)
+            self.panel_table.setCellWidget(r, 4, cell)
+            self._panel_enabled_cbs.append(cb)
+
+    def on_panel_globals_change(self, *_):
+        if getattr(self, "_panel_syncing", False):
+            return
+        if self.panel_min_spinbox.value() > self.panel_max_spinbox.value():
+            self.panel_max_spinbox.setValue(self.panel_min_spinbox.value())
+        sp = self.config.setdefault("shock_panel", {})
+        sp["intensity_min"] = self.panel_min_spinbox.value()
+        sp["intensity_max"] = self.panel_max_spinbox.value()
+        sp["duration"] = round(self.panel_duration_spinbox.value(), 1)
+        save_app_config(self.config)
+        self._update_shock_panel_controller()
+
+    def _on_panel_enabled_toggled(self, eid, checked):
+        entries = self.config.setdefault("shock_panel", {}).setdefault("entries", [])
+        for e in entries:
+            if e.get("id") == eid:
+                e["enabled"] = checked
+                break
+        save_app_config(self.config)
+        self._update_shock_panel_controller()
+        self._set_status(f"Entry {'enabled' if checked else 'disabled'}")
+
+    def _panel_ui_tick(self):
+        """Reflect global values / enabled state changed from the avatar into the UI."""
+        if not hasattr(self, "panel_min_spinbox") or not self.messenger:
+            return
+        ctrl = getattr(self.messenger, "shock_panel_controller", None)
+        if ctrl is None:
+            return
+
+        state = ctrl.get_global_state()
+        self._panel_syncing = True
+        try:
+            if not self.panel_min_spinbox._spin.hasFocus():
+                self.panel_min_spinbox.setValue(int(round(state["intensity_min"])))
+            if not self.panel_max_spinbox._spin.hasFocus():
+                self.panel_max_spinbox.setValue(int(round(state["intensity_max"])))
+            if not self.panel_duration_spinbox._spin.hasFocus():
+                self.panel_duration_spinbox.setValue(round(state["duration"], 1))
+        finally:
+            self._panel_syncing = False
+
+        # Sync per-entry Enabled checkboxes from the live controller config.
+        ctrl_enabled = {e.get("id"): e.get("enabled", True)
+                        for e in ctrl.config.get("entries", [])}
+        gui_entries = self.config.get("shock_panel", {}).get("entries", [])
+        for cb in getattr(self, "_panel_enabled_cbs", []):
+            eid = cb.property("entry_id")
+            if eid in ctrl_enabled and cb.isChecked() != ctrl_enabled[eid]:
+                cb.blockSignals(True)
+                cb.setChecked(ctrl_enabled[eid])
+                cb.blockSignals(False)
+                for e in gui_entries:
+                    if e.get("id") == eid:
+                        e["enabled"] = ctrl_enabled[eid]
+                        break
 
     def _update_shock_panel_controller(self):
         if self.messenger and hasattr(self.messenger, 'update_shock_panel_config'):
@@ -1976,10 +2082,10 @@ class ShockPanelEntryDialog(QDialog):
             "hold":    "true = shock continuously, false = stop",
         }.get(self.mode_combo.currentData(), "")
         self.paths_lbl.setText(
-            f"{base}/Trigger       (bool — {mode_hint})\n"
-            f"{base}/IntensityMin  (float 0–1 — get/set min intensity)\n"
-            f"{base}/IntensityMax  (float 0–1 — get/set max intensity)\n"
-            f"{base}/Duration      (float 0–1 — get/set duration, 0=0.5s, 1=10s)"
+            f"{base}/Trigger  (bool — {mode_hint})\n"
+            f"{base}/Enabled  (bool — get/set whether this entry is active)\n"
+            "\n"
+            "Intensity Min/Max and Duration are global — see the Shock Panel page."
         )
 
     def _update_shocker_btn(self):

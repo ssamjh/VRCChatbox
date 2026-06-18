@@ -107,6 +107,9 @@ def load_app_config():
         },
         "shock_panel": {
             "enabled": False,
+            "intensity_min": 20.0,
+            "intensity_max": 80.0,
+            "duration": 1.0,
             "entries": []
         },
         "bpm": {
