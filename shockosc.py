@@ -35,6 +35,10 @@ class ShockOSCController:
         self.cooldown_states = {}  # Track which groups are on cooldown
         self.shock_callback = shock_callback  # Callback to notify about shocks
 
+        # Reused HTTP session so the REST fallback doesn't re-open a TLS
+        # connection on every shock (avoids ~hundreds of ms of handshake latency)
+        self.http_session = requests.Session()
+
         # SignalR connection properties
         self.websocket = None
         self.signalr_thread = None
@@ -104,18 +108,50 @@ class ShockOSCController:
         try:
             url = f"{self.config.get('openshock_url', 'https://api.openshock.app')}/2/shockers/control"
             
-            response = requests.post(url, json=data, headers=headers, timeout=5)
-            
+            response = self.http_session.post(url, json=data, headers=headers, timeout=5)
+
             if response.status_code == 200:
                 print(f"OpenShock command sent successfully: {len(shocker_ids)} shocker(s), {intensity}%, {duration}s")
                 return True
             else:
                 print(f"OpenShock API error {response.status_code}: {response.text}")
                 return False
-                
+
         except requests.RequestException as e:
             print(f"Failed to send OpenShock command: {e}")
             return False
+
+    def dispatch_control(self, shocker_ids, intensity, duration, action_type=1):
+        """Send a control command using the fastest available transport.
+
+        Prefers the live SignalR gateway (persistent WebSocket, fire-and-forget,
+        ~tens of ms) which is already open for receiving events. Falls back to
+        the HTTP REST API if the gateway isn't connected or the send fails.
+
+        duration: duration in seconds.
+        """
+        if not shocker_ids:
+            print("No shocker IDs provided")
+            return False
+
+        # Try the low-latency live gateway first
+        if self.signalr_connected:
+            t0 = time.perf_counter()
+            ok = self.send_signalr_control(shocker_ids, intensity, int(duration * 1000), action_type)
+            dt = (time.perf_counter() - t0) * 1000
+            if ok:
+                print(f"[TIMING] shock sent via SignalR gateway in {dt:.0f}ms ({len(shocker_ids)} shocker(s), {intensity}%, {duration}s)")
+                return True
+            print(f"[TIMING] SignalR send failed after {dt:.0f}ms, falling back to HTTP")
+        else:
+            print("[TIMING] SignalR not connected, using HTTP")
+
+        # Fall back to the REST API
+        t0 = time.perf_counter()
+        ok = self.send_openshock_command(shocker_ids, intensity, duration, action_type)
+        dt = (time.perf_counter() - t0) * 1000
+        print(f"[TIMING] HTTP control returned {ok} in {dt:.0f}ms")
+        return ok
 
     def is_group_on_cooldown(self, group):
         """Check if a group is currently on cooldown"""
@@ -209,8 +245,8 @@ class ShockOSCController:
                         shocker_ids.append(shocker_id)
             
             if shocker_ids:
-                print(f"Using OpenShock API for shockers: {shocker_ids}")
-                openshock_sent = self.send_openshock_command(shocker_ids, intensity, duration, action_type=1)
+                print(f"Using OpenShock for shockers: {shocker_ids}")
+                openshock_sent = self.dispatch_control(shocker_ids, intensity, duration, action_type=1)
             else:
                 print(f"No shockers assigned to groups: {available_groups}")
         
@@ -284,8 +320,8 @@ class ShockOSCController:
                         shocker_ids.append(shocker_id)
             
             if shocker_ids:
-                print(f"Using OpenShock API for immediate shock: {shocker_ids}")
-                openshock_sent = self.send_openshock_command(shocker_ids, intensity, duration, action_type=1)
+                print(f"Using OpenShock for immediate shock: {shocker_ids}")
+                openshock_sent = self.dispatch_control(shocker_ids, intensity, duration, action_type=1)
         
         # If OpenShock wasn't used or failed, fall back to OSC
         if not openshock_sent:
@@ -794,8 +830,11 @@ class ShockOSCController:
             await self.websocket.send(msg)
 
         try:
+            # A live WebSocket send only queues to the event loop, so it returns
+            # in milliseconds. A long wait here means the socket is dead — fail
+            # fast to the HTTP fallback rather than stalling the shock.
             future = asyncio.run_coroutine_threadsafe(_send(), self.signalr_loop)
-            future.result(timeout=2.0)
+            future.result(timeout=0.5)
             return True
         except Exception as e:
             print(f"SignalR control send error: {e}")
