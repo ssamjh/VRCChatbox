@@ -8,6 +8,7 @@ from boop_counter import BoopCounter
 from shockosc import ShockOSCController
 from slide import SlideController
 from shock_panel import ShockPanelController
+from whisper_stt import WhisperSTTController
 
 
 class VRChatMessenger:
@@ -58,6 +59,14 @@ class VRChatMessenger:
         # Internet shock display state
         self.show_internet_shock_info = False
         self.internet_shock_hide_timer = None
+
+        # Speech-to-text display state (controller is created later, but these
+        # must exist before _initialize_messages() runs its first display update)
+        self.stt_text = ""
+        self.show_stt = False
+        self.stt_typing_active = False
+        self.stt_final_linger = 4.0  # seconds a finalized line stays before clearing
+        self._stt_hide_timer = None
         
         # Contact hold tracking
         self.contact_start_times = {}  # Track when contact started for each group
@@ -102,6 +111,14 @@ class VRChatMessenger:
         self.shock_panel_controller.on_state_change = self._on_shock_panel_state_change
         panel_config = self.app_config.get("shock_panel", {})
         self.shock_panel_controller.update_config(panel_config)
+
+        # Speech-to-text controller (display state set up earlier in __init__)
+        self.stt_controller = WhisperSTTController(
+            on_partial=self._on_stt_partial,
+            on_final=self._on_stt_final,
+            on_state=self._on_stt_state,
+        )
+        self.stt_controller.update_config(self.app_config.get("whisper", {}))
 
         # Setup OSC server for listening
         self.server = osc_server.ThreadingOSCUDPServer(
@@ -181,15 +198,48 @@ class VRChatMessenger:
             )
 
         active_lines = []
+
+        # Live speech-to-text sits above everything else as the top line.
+        stt_line = self._get_stt_line()
+        if stt_line:
+            active_lines.append(stt_line)
+
         for category in display_order:
             if category in self.active_messages:
                 message = self.active_messages[category]["message"]
                 if self._should_show_message(category, message):
                     active_lines.append(message)
 
-        combined_message = "\n".join(active_lines)
+        combined_message = self._clamp_chatbox(active_lines)
         self.client.send_message("/chatbox/input", [combined_message, True, False])
         print(f"Display updated:\n{combined_message}")
+
+    def _get_stt_line(self):
+        """Current transcription as a single line, tail-truncated to max_chars.
+
+        Keeping the tail means the most recently spoken words stay visible while
+        you talk, which reads more naturally than clipping the start."""
+        if not self.show_stt or not self.stt_text:
+            return ""
+        text = " ".join(self.stt_text.split())  # collapse newlines/whitespace
+        max_chars = self.app_config.get("whisper", {}).get("max_chars", 120)
+        if len(text) > max_chars:
+            tail = text[-max_chars:]
+            # Avoid starting mid-word when possible.
+            space = tail.find(" ")
+            text = "…" + (tail[space + 1:] if 0 <= space < 20 else tail)
+        return text
+
+    @staticmethod
+    def _clamp_chatbox(lines):
+        """Join lines respecting VRChat's 9-line / 144-char chatbox limits.
+
+        Lines are kept in priority order (STT first), trimming from the bottom."""
+        lines = lines[:9]
+        combined = "\n".join(lines)
+        if len(combined) > 144:
+            combined = combined[:144]
+        return combined
 
     def _initialize_messages(self):
         """Initialize messages once rather than continuously updating them"""
@@ -465,6 +515,55 @@ class VRChatMessenger:
         self.client.send_message("/chatbox/input", ["", True, False])
         print("Internet shock info hidden - chatbox cleared")
 
+    def _on_stt_partial(self, text):
+        """Live partial transcription while the user is speaking."""
+        if not text:
+            return
+        # Still talking — cancel any pending clear from a previous utterance.
+        if self._stt_hide_timer:
+            self._stt_hide_timer.cancel()
+            self._stt_hide_timer = None
+        self.stt_text = text
+        self.show_stt = True
+        self.request_display_update()
+
+    def _on_stt_final(self, text):
+        """Finalized transcription once speech stops; lingers, then clears."""
+        self.stt_text = text or ""
+        self.show_stt = bool(self.stt_text)
+        self.request_display_update()
+        if self._stt_hide_timer:
+            self._stt_hide_timer.cancel()
+        if self.show_stt:
+            self._stt_hide_timer = threading.Timer(self.stt_final_linger, self._hide_stt)
+            self._stt_hide_timer.start()
+
+    def _hide_stt(self):
+        self.show_stt = False
+        self.stt_text = ""
+        self._stt_hide_timer = None
+        self.request_display_update()
+
+    def _on_stt_state(self, active):
+        """Drive the VRChat typing indicator with speech start/stop."""
+        if active == self.stt_typing_active:
+            return
+        self.stt_typing_active = active
+        try:
+            self.client.send_message("/chatbox/typing", [active])
+        except Exception as e:
+            print(f"Failed to send typing indicator: {e}")
+
+    def update_whisper_config(self, whisper_config):
+        """Update speech-to-text configuration"""
+        self.app_config["whisper"] = whisper_config
+        save_app_config(self.app_config)
+        if hasattr(self, 'stt_controller'):
+            self.stt_controller.update_config(whisper_config)
+        # If STT was just turned off, clear any transcription still on screen.
+        if not whisper_config.get("enabled") and self.show_stt:
+            self._hide_stt()
+
     def clear_all_hold_timers(self):
         """Clear all active hold timers"""
         for group, timer in list(self.hold_timers.items()):
@@ -525,6 +624,12 @@ class VRChatMessenger:
         # Stop shock panel holds
         if hasattr(self, 'shock_panel_controller'):
             self.shock_panel_controller.cleanup()
+
+        # Stop speech-to-text
+        if hasattr(self, 'stt_controller'):
+            self.stt_controller.cleanup()
+        if getattr(self, '_stt_hide_timer', None):
+            self._stt_hide_timer.cancel()
 
         # Stop OSC server
         if hasattr(self, 'server'):
@@ -604,9 +709,10 @@ class VRChatMessenger:
                     return False
             return True
 
-        # BPM is shown only when the heart rate monitor is connected
+        # BPM is shown only when connected AND we have a real numeric reading
+        # (get_bpm() is 0 before the first valid measurement / on a dropped read).
         if category == "bpm":
-            return bpm_monitor.is_connected()
+            return bpm_monitor.is_connected() and bpm_monitor.get_bpm() > 0
 
         # Time is shown only when enabled
         if category == "time":

@@ -19,6 +19,11 @@ from PyQt6.QtGui import QPalette, QColor
 from config import load_app_config, save_app_config
 from shock_panel import osc_safe_name
 from bpm import bpm_monitor, BLEAK_AVAILABLE
+from whisper_stt import (
+    WhisperSTTController, DEPS_AVAILABLE as STT_DEPS_AVAILABLE,
+    NUMPY_AVAILABLE, SOUNDDEVICE_AVAILABLE, WEBRTCVAD_AVAILABLE,
+    FASTER_WHISPER_AVAILABLE,
+)
 
 # ── Theme ─────────────────────────────────────────────────────────────────────
 BG       = "#1C1B1F"
@@ -316,6 +321,7 @@ class VRCChatboxGUI(QMainWindow):
             ("  Slide",        self._build_slide_page()),
             ("  Shock Panel",  self._build_shock_panel_page()),
             ("  BPM",          self._build_bpm_page()),
+            ("  Speech",       self._build_speech_page()),
             ("  OSC Monitor",  self._build_osc_monitor_page()),
         ]
         for i, (label, page) in enumerate(pages):
@@ -1159,6 +1165,214 @@ class VRCChatboxGUI(QMainWindow):
         else:
             bpm_monitor.disconnect()
         self._set_status(f"BPM Monitor {'enabled' if checked else 'disabled'}")
+
+    # ── Speech (STT) page ──────────────────────────────────────────────────
+
+    def _build_speech_page(self):
+        wc = self.config.get("whisper", {})
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setSpacing(20)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        layout.addWidget(_label("Speech to Text", "section_title"))
+        layout.addWidget(_hline())
+
+        # Dependency hint — STT needs extra packages not in the base install.
+        if not STT_DEPS_AVAILABLE:
+            missing = []
+            if not NUMPY_AVAILABLE:        missing.append("numpy")
+            if not SOUNDDEVICE_AVAILABLE:  missing.append("sounddevice")
+            if not WEBRTCVAD_AVAILABLE:    missing.append("webrtcvad-wheels")
+            if not FASTER_WHISPER_AVAILABLE: missing.append("faster-whisper")
+            warn = QGroupBox("Dependencies missing")
+            wl = QVBoxLayout(warn)
+            wl.setContentsMargins(16, 16, 16, 16)
+            wl.addWidget(_label(
+                "Speech to text is disabled until these packages are installed:\n"
+                f"  pip install {' '.join(missing)}",
+                "field_label"))
+            layout.addWidget(warn)
+
+        self.stt_enabled_cb = QCheckBox("Enable Speech to Text (always-on)")
+        self.stt_enabled_cb.setChecked(wc.get("enabled", False) and STT_DEPS_AVAILABLE)
+        self.stt_enabled_cb.setEnabled(STT_DEPS_AVAILABLE)
+        self.stt_enabled_cb.toggled.connect(self.on_speech_settings_change)
+        layout.addWidget(self.stt_enabled_cb)
+
+        body = QHBoxLayout()
+        body.setSpacing(24)
+        layout.addLayout(body)
+
+        # ── Left: status ───────────────────────────────────────────────────
+        left = QVBoxLayout()
+        left.setSpacing(16)
+        body.addLayout(left, stretch=1)
+
+        status_card = QGroupBox("Status")
+        sc_layout = QVBoxLayout(status_card)
+        sc_layout.setContentsMargins(20, 24, 20, 20)
+        sc_layout.setSpacing(8)
+        self._stt_status_lbl = QLabel("Idle")
+        self._stt_status_lbl.setObjectName("status_lbl")
+        self._stt_status_lbl.setWordWrap(True)
+        sc_layout.addWidget(self._stt_status_lbl)
+        left.addWidget(status_card)
+
+        info_card = QGroupBox("How it works")
+        ic = QVBoxLayout(info_card)
+        ic.setContentsMargins(16, 16, 16, 16)
+        ic.addWidget(_label(
+            "When enabled, your microphone is transcribed live and shown as the\n"
+            "top line of the chatbox while you speak. It clears a few seconds\n"
+            "after you stop. The first run downloads the chosen Whisper model.",
+            "field_label"))
+        left.addWidget(info_card)
+        left.addStretch()
+
+        # ── Right: settings ────────────────────────────────────────────────
+        right = QVBoxLayout()
+        right.setSpacing(16)
+        body.addLayout(right, stretch=1)
+
+        settings_card = QGroupBox("Settings")
+        sg = QGridLayout(settings_card)
+        sg.setSpacing(14)
+        sg.setContentsMargins(20, 24, 20, 20)
+        sg.setColumnMinimumWidth(0, 130)
+        sg.setColumnStretch(1, 1)
+
+        # Microphone device
+        sg.addWidget(_label("Microphone", "field_label"), 0, 0)
+        mic_row = QHBoxLayout()
+        mic_row.setSpacing(8)
+        self.stt_device_combo = QComboBox()
+        self._populate_stt_devices(wc.get("device_index"), wc.get("device_name", ""))
+        self.stt_device_combo.currentIndexChanged.connect(self.on_speech_settings_change)
+        mic_row.addWidget(self.stt_device_combo, stretch=1)
+        refresh_btn = QPushButton("↻")
+        refresh_btn.setFixedWidth(40)
+        refresh_btn.setToolTip("Rescan input devices")
+        refresh_btn.clicked.connect(lambda: self._populate_stt_devices(
+            self.stt_device_combo.currentData(), ""))
+        mic_row.addWidget(refresh_btn)
+        sg.addLayout(mic_row, 0, 1)
+
+        # Model size
+        sg.addWidget(_label("Model", "field_label"), 1, 0)
+        self.stt_model_combo = QComboBox()
+        for m in ["tiny", "base", "small", "medium", "large-v3"]:
+            self.stt_model_combo.addItem(m)
+        self.stt_model_combo.setCurrentText(wc.get("model_size", "small"))
+        self.stt_model_combo.currentIndexChanged.connect(self.on_speech_settings_change)
+        sg.addWidget(self.stt_model_combo, 1, 1)
+
+        # Compute device
+        sg.addWidget(_label("Compute", "field_label"), 2, 0)
+        self.stt_compute_combo = QComboBox()
+        self.stt_compute_combo.addItem("Auto", userData="auto")
+        self.stt_compute_combo.addItem("GPU (CUDA)", userData="cuda")
+        self.stt_compute_combo.addItem("CPU", userData="cpu")
+        cd = wc.get("compute_device", "auto")
+        self.stt_compute_combo.setCurrentIndex(
+            next((i for i in range(self.stt_compute_combo.count())
+                  if self.stt_compute_combo.itemData(i) == cd), 0))
+        self.stt_compute_combo.currentIndexChanged.connect(self.on_speech_settings_change)
+        sg.addWidget(self.stt_compute_combo, 2, 1)
+
+        # Language
+        sg.addWidget(_label("Language", "field_label"), 3, 0)
+        self.stt_language_edit = QLineEdit()
+        self.stt_language_edit.setText(wc.get("language", "auto"))
+        self.stt_language_edit.setPlaceholderText("auto, or ISO code e.g. en")
+        self.stt_language_edit.editingFinished.connect(self.on_speech_settings_change)
+        sg.addWidget(self.stt_language_edit, 3, 1)
+
+        # Silence timeout
+        sg.addWidget(_label("Silence timeout (s)", "field_label"), 4, 0)
+        self.stt_silence_spinbox = Stepper(0.3, 5.0, 0.1, wc.get("silence_timeout", 1.0),
+                                           decimals=1, spin_width=90)
+        self.stt_silence_spinbox.valueChanged.connect(self.on_speech_settings_change)
+        sg.addWidget(self.stt_silence_spinbox, 4, 1)
+
+        # Partial interval
+        sg.addWidget(_label("Update every (s)", "field_label"), 5, 0)
+        self.stt_partial_spinbox = Stepper(0.3, 3.0, 0.1, wc.get("partial_interval", 0.8),
+                                           decimals=1, spin_width=90)
+        self.stt_partial_spinbox.valueChanged.connect(self.on_speech_settings_change)
+        sg.addWidget(self.stt_partial_spinbox, 5, 1)
+
+        # Max characters
+        sg.addWidget(_label("Max characters", "field_label"), 6, 0)
+        self.stt_maxchars_spinbox = Stepper(20, 144, 1, wc.get("max_chars", 120), spin_width=90)
+        self.stt_maxchars_spinbox.valueChanged.connect(self.on_speech_settings_change)
+        sg.addWidget(self.stt_maxchars_spinbox, 6, 1)
+
+        # VAD aggressiveness
+        sg.addWidget(_label("Mic sensitivity", "field_label"), 7, 0)
+        self.stt_vad_spinbox = Stepper(0, 3, 1, wc.get("aggressiveness", 2), spin_width=90)
+        self.stt_vad_spinbox.setToolTip("WebRTC VAD aggressiveness: 0 = most sensitive, 3 = filters most noise")
+        self.stt_vad_spinbox.valueChanged.connect(self.on_speech_settings_change)
+        sg.addWidget(self.stt_vad_spinbox, 7, 1)
+
+        right.addWidget(settings_card)
+        right.addStretch()
+
+        # Status poll timer
+        self._stt_ui_timer = QTimer()
+        self._stt_ui_timer.setInterval(500)
+        self._stt_ui_timer.timeout.connect(self._stt_ui_tick)
+        self._stt_ui_timer.start()
+
+        return page
+
+    def _populate_stt_devices(self, selected_index, selected_name):
+        self.stt_device_combo.blockSignals(True)
+        self.stt_device_combo.clear()
+        self.stt_device_combo.addItem("System default", userData=None)
+        for idx, name in WhisperSTTController.list_input_devices():
+            self.stt_device_combo.addItem(f"{name}", userData=idx)
+        # Restore selection by index, falling back to remembered name.
+        target = 0
+        for i in range(self.stt_device_combo.count()):
+            if self.stt_device_combo.itemData(i) == selected_index:
+                target = i
+                break
+        else:
+            if selected_name:
+                hit = self.stt_device_combo.findText(selected_name)
+                if hit >= 0:
+                    target = hit
+        self.stt_device_combo.setCurrentIndex(target)
+        self.stt_device_combo.blockSignals(False)
+
+    def _stt_ui_tick(self):
+        if not hasattr(self, "_stt_status_lbl") or not self.messenger:
+            return
+        ctrl = getattr(self.messenger, "stt_controller", None)
+        if ctrl is not None:
+            self._stt_status_lbl.setText(ctrl.get_status())
+
+    def on_speech_settings_change(self, *_):
+        idx = self.stt_device_combo.currentData()
+        self.config.setdefault("whisper", {}).update({
+            "enabled":          self.stt_enabled_cb.isChecked(),
+            "device_index":     idx,
+            "device_name":      self.stt_device_combo.currentText() if idx is not None else "",
+            "model_size":       self.stt_model_combo.currentText(),
+            "compute_device":   self.stt_compute_combo.currentData(),
+            "language":         self.stt_language_edit.text().strip() or "auto",
+            "silence_timeout":  round(self.stt_silence_spinbox.value(), 1),
+            "partial_interval": round(self.stt_partial_spinbox.value(), 1),
+            "max_chars":        int(self.stt_maxchars_spinbox.value()),
+            "aggressiveness":   int(self.stt_vad_spinbox.value()),
+        })
+        save_app_config(self.config)
+        if self.messenger and hasattr(self.messenger, "update_whisper_config"):
+            self.messenger.update_whisper_config(self.config["whisper"])
+        s = "enabled" if self.config["whisper"]["enabled"] else "disabled"
+        self._set_status(f"Speech to Text {s}")
 
     # ── OSC Monitor page ───────────────────────────────────────────────────
 

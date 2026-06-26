@@ -117,6 +117,18 @@ def load_app_config():
             "enabled": False,
             "device_address": "",
             "device_name": "",
+        },
+        "whisper": {
+            "enabled": False,
+            "device_index": None,        # input device index, None = system default
+            "device_name": "",           # remembered for the GUI dropdown label
+            "model_size": "small",       # tiny / base / small / medium / large-v3
+            "compute_device": "auto",    # auto / cpu / cuda
+            "language": "auto",          # "auto" or an ISO code like "en"
+            "silence_timeout": 1.0,      # seconds of silence that finalizes an utterance
+            "partial_interval": 0.8,     # seconds between live partial transcriptions
+            "max_chars": 120,            # max characters for the transcription line
+            "aggressiveness": 2,         # WebRTC VAD aggressiveness (0-3)
         }
     }
 
@@ -158,6 +170,12 @@ def load_app_config():
                     default_bpm = default_config["bpm"].copy()
                     default_bpm.update(user_config.get("bpm", {}))
                     merged_config["bpm"] = default_bpm
+
+                # Deep merge whisper config
+                if "whisper" in default_config:
+                    default_whisper = default_config["whisper"].copy()
+                    default_whisper.update(user_config.get("whisper", {}))
+                    merged_config["whisper"] = default_whisper
 
                 # Ensure messages section exists and merge with defaults
                 if "messages" not in merged_config:

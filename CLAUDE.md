@@ -18,13 +18,17 @@ start.bat
 **Dependencies** (no requirements.txt — install manually):
 ```bash
 pip install python-osc PyQt6 requests websockets
+# Optional: BPM heart-rate monitor
+pip install bleak
+# Optional: speech-to-text (Speech tab)
+pip install faster-whisper sounddevice webrtcvad-wheels numpy
 ```
 
 **Build to `.exe` (Windows, `--onedir`):**
 ```bat
 build.bat
 ```
-Creates `.build_venv/`, installs deps + PyInstaller, outputs to `dist\VRCChatbox\VRCChatbox.exe`. Re-running reuses the venv. Config files (`app_config.json`, `boops.json`) are stored in `%APPDATA%\VRCChatbox\` and are never touched by the build. On first run they are created from defaults; if old copies exist next to the exe/script they are migrated automatically.
+Creates `.build_venv/`, installs deps + PyInstaller, outputs to `dist\VRCChatbox\VRCChatbox.exe`. Re-running reuses the venv. Config files (`app_config.json`, `boops.json`) are stored in `%APPDATA%\VRCChatbox\` and are never touched by the build. On first run they are created from defaults; if old copies exist next to the exe/script they are migrated automatically. Downloaded Whisper models are cached in `%APPDATA%\VRCChatbox\models\` (see `whisper_stt._models_dir`).
 
 **OSC monitoring tool** (useful for debugging VRChat avatar parameters):
 ```bash
@@ -46,6 +50,7 @@ This is a Python desktop app that displays real-time data in the VRChat in-game 
 | `placeholders.py` | `DataCache` singleton + `get_placeholder_value()` — feeds live data into message templates |
 | `config.py` | Load/save `app_config.json`; also owns `message_config` for the rotating message system |
 | `boop_counter.py` | Persistent daily/total boop counter backed by `boops.json` |
+| `whisper_stt.py` | `WhisperSTTController` — always-on mic capture, WebRTC VAD gating, faster-whisper transcription |
 
 ### Key Data Flow
 
