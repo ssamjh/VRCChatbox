@@ -386,6 +386,11 @@ class VRCChatboxGUI(QMainWindow):
         card_layout = QVBoxLayout(card)
         card_layout.setSpacing(16)
 
+        self.show_time_cb = QCheckBox("Show Time in chatbox")
+        self.show_time_cb.setChecked(self.config.get("show_time", True))
+        self.show_time_cb.toggled.connect(self.on_time_toggle)
+        card_layout.addWidget(self.show_time_cb)
+
         self.show_music_cb = QCheckBox("Show Music Info in chatbox")
         self.show_music_cb.setChecked(self.config.get("show_music", True))
         self.show_music_cb.toggled.connect(self.on_music_toggle)
@@ -1313,6 +1318,14 @@ class VRCChatboxGUI(QMainWindow):
             s = "enabled" if self.config["shockosc"]["enabled"] else "disabled"
             self._set_status(f"ShockOSC {s}")
 
+    def on_time_toggle(self, checked):
+        self.config["show_time"] = checked
+        save_app_config(self.config)
+        if self.messenger:
+            self.messenger.show_time = checked
+            self.messenger.request_display_update()
+        self._set_status(f"Time display {'enabled' if checked else 'disabled'}")
+
     def on_music_toggle(self, checked):
         self.config["show_music"] = checked
         save_app_config(self.config)
@@ -1732,6 +1745,9 @@ class VRCChatboxGUI(QMainWindow):
             self.messenger.update_slide_config(self.config.get("slide", {}))
 
     def run(self):
+        # Cleanly disconnect the BLE heart-rate sensor on exit so it is free to
+        # reconnect next launch (GUI mode never calls messenger.cleanup()).
+        self.app.aboutToQuit.connect(bpm_monitor.shutdown)
         self.show()
         self.app.exec()
 

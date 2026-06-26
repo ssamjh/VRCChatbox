@@ -28,6 +28,11 @@ class VRChatMessenger:
         # Load app configuration
         self.app_config = load_app_config()
         self.show_music = self.app_config.get("show_music", True)
+        self.show_time = self.app_config.get("show_time", True)
+
+        # Refresh the chatbox the instant a new heart rate arrives (capped by
+        # the 1.5s rate limit) rather than waiting for the 5s poll loop.
+        bpm_monitor.set_on_update(self.request_display_update)
 
         # Add track of current song to detect changes
         self.current_song = None
@@ -228,12 +233,12 @@ class VRChatMessenger:
                 # Mark this as a song change update (will be blocked during shock)
                 self.request_display_update(from_song_change=True)
 
-            # Refresh display when BPM connection state changes or while connected
+            # Refresh display when BPM connection state changes. The live value
+            # itself is pushed via bpm_monitor's on_update callback, so no need
+            # to poll it here.
             bpm_connected = bpm_monitor.is_connected()
             if bpm_connected != self._last_bpm_connected:
                 self._last_bpm_connected = bpm_connected
-                self.request_display_update()
-            elif bpm_connected:
                 self.request_display_update()
 
             time.sleep(5)  # Check every 5 seconds
@@ -525,6 +530,10 @@ class VRChatMessenger:
         if hasattr(self, 'server'):
             self.server.shutdown()
 
+        # Cleanly tear down the BLE heart-rate link so the sensor is free to
+        # reconnect on the next launch.
+        bpm_monitor.shutdown()
+
     def request_display_update(self, force_for_shock=False, from_song_change=False):
         """Request a display update, respecting rate limits"""
         if self.show_shock_info and from_song_change:
@@ -599,9 +608,9 @@ class VRChatMessenger:
         if category == "bpm":
             return bpm_monitor.is_connected()
 
-        # Time is always shown
+        # Time is shown only when enabled
         if category == "time":
-            return True
+            return self.show_time
 
         return True
 
@@ -609,6 +618,13 @@ class VRChatMessenger:
         """Toggle music display and save to config"""
         self.show_music = show_music
         self.app_config["show_music"] = show_music
+        save_app_config(self.app_config)
+        self.request_display_update()
+
+    def toggle_time_display(self, show_time):
+        """Toggle time display and save to config"""
+        self.show_time = show_time
+        self.app_config["show_time"] = show_time
         save_app_config(self.app_config)
         self.request_display_update()
 

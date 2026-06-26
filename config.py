@@ -75,6 +75,7 @@ def load_app_config():
     config_file = _config_path("app_config.json")
     default_config = {
         "show_music": True,
+        "show_time": True,
         "messages": get_default_message_config(),
         "shockosc": {
             "enabled": False,
