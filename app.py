@@ -24,6 +24,11 @@ class VRChatMessenger:
 
         # Simple boop display flag
         self.show_boops = False
+        # Auto-clear the boop counter after a while. Without this it only ever
+        # resets on a song change, so when there's no music playing (e.g. using
+        # just the BPM monitor) the counter stays stuck on after the first boop.
+        self.boop_linger = 3.0  # seconds the boop counter stays visible
+        self._boop_hide_timer = None
         self._last_bpm_connected = False
 
         # Load app configuration
@@ -360,10 +365,24 @@ class VRChatMessenger:
                     message_config["boops"]["messages"][0]
                 )
 
+            # (Re)start the hide timer so the counter clears even when no song
+            # change comes along to reset it.
+            if self._boop_hide_timer:
+                self._boop_hide_timer.cancel()
+            self._boop_hide_timer = threading.Timer(self.boop_linger, self._hide_boops)
+            self._boop_hide_timer.daemon = True
+            self._boop_hide_timer.start()
+
             # Request an update - this won't send immediately if rate-limited
             self.request_display_update()
         else:
             print(f"Boop ignored - value was: {args}")
+
+    def _hide_boops(self):
+        """Stop showing the boop counter and refresh the chatbox."""
+        self.show_boops = False
+        self._boop_hide_timer = None
+        self.request_display_update()
 
     def _handle_shock_trigger(self, address, *args):
         """Handle ShockOSC trigger from contact receivers with hold time logic"""
